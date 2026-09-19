@@ -20,8 +20,8 @@ describes planned behavior, not the current implementation.
 - Persist ConPTY handles, processes, or session metadata across broker restarts.
 - Buffer or replay terminal output produced while a session is detached.
 - Reconstruct terminal screens with a VT parser or terminal emulator.
-- Select or implement an authentication method in this phase.
-- Add encryption or expose the unauthenticated broker directly to a network.
+- Provide security-grade authentication or encryption in this phase.
+- Expose the broker directly to an untrusted network.
 
 ## Agreed session semantics
 
@@ -140,23 +140,26 @@ FarShell.Client --terminate <session-id> [host] [port]
 The exact display format of `--list` may evolve, but it should initially include
 the session ID, attached/detached state, creation time, and terminal dimensions.
 
-## Authentication boundary
+## Identity and authentication boundary
 
-The authentication mechanism is intentionally deferred, but session code must
-not depend on a specific mechanism.
+The proposed initial client identity and enrollment mechanism is documented in
+[`AUTH_PROPOSAL.md`](AUTH_PROPOSAL.md). It intentionally prevents accidental
+session-owner mixing but is not a secure authentication protocol. Session code
+must not depend on that specific mechanism.
 
-- Authentication occurs after protocol negotiation and before list, create,
-  attach, or terminate operations.
-- Authentication produces a broker-owned client identity.
-- The broker derives `OwnerId` from that verified identity. A client never
+- Identity resolution occurs after protocol negotiation and before list,
+  create, attach, or terminate operations.
+- Identity resolution produces a broker-owned client identity.
+- The broker derives `OwnerId` from that resolved identity. A client never
   supplies or selects its own owner ID.
 - Authorization checks create, list, attach, and terminate operations against
   the identity in `ConnectionContext`.
-- A transport-specific authenticator may later provide the identity without
+- A secure authenticator may later provide the identity without
   changing `ShellSession` or `SessionManager`.
 
-Until authentication is implemented, all local connections use one anonymous
-identity and therefore share one visible session namespace.
+Until client identity is implemented, all local connections use one anonymous
+identity and therefore share one visible session namespace. The plaintext
+identity proposal must not be treated as protection against a network attacker.
 
 ## Limits and failure handling
 
@@ -184,8 +187,10 @@ registered Windows handle wait before targeting high session counts.
 5. Add session control messages and the corresponding CLI options.
 6. Implement detach/attach with continuous drain-and-discard output handling.
 7. Add limits, coordinated shutdown, and failure-isolation tests.
-8. Integrate a concrete authentication method later without changing session
-   ownership or lifecycle semantics.
+8. Integrate the client identity enrollment described in `AUTH_PROPOSAL.md`
+   without changing session ownership or lifecycle semantics.
+9. Replace the identity provider later if security-grade authentication is
+   required.
 
 ## Acceptance criteria
 
@@ -202,4 +207,3 @@ registered Windows handle wait before targeting high session counts.
 - Explicit termination and broker shutdown remove the complete process tree.
 - Repeated connect, detach, attach, terminate, and shutdown races leave no
   unobserved tasks, blocked handles, or orphaned processes.
-

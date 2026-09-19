@@ -157,3 +157,7 @@ running each tool locally in Windows Terminal on the corporate laptop.
 The agreed plan for multi-session support, detach/attach persistence, session
 listing, and future authentication boundaries is documented in
 [`SESSION_ARCHITECTURE.md`](SESSION_ARCHITECTURE.md).
+
+The proposed broker-approved client identity flow is documented in
+[`AUTH_PROPOSAL.md`](AUTH_PROPOSAL.md). It is explicitly not a secure
+authentication protocol while the transport remains unencrypted.
