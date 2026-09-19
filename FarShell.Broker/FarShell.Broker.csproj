@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FarShell.ConPTY\FarShell.ConPTY.csproj" />
+    <ProjectReference Include="..\FarShell.Protocol\FarShell.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>
