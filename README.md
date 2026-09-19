@@ -57,8 +57,7 @@ In the interactive Windows/Entra session that must own all shell processes:
 dotnet run --project .\FarShell.Broker
 ```
 
-The broker prints both its loopback endpoint and current Windows identity. In
-the second tab:
+The broker prints its loopback endpoint. In the second tab:
 
 ```powershell
 dotnet run --project .\FarShell.Client
