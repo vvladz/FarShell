@@ -19,9 +19,9 @@ internal sealed class BrokerServer
 
     internal async Task RunAsync(CancellationToken cancellationToken)
     {
-        var listener = new TcpListener(IPAddress.Loopback, _port);
+        var listener = new TcpListener(IPAddress.Any, _port);
         listener.Start(backlog: 1);
-        Console.WriteLine($"Listening on 127.0.0.1:{_port}.");
+        Console.WriteLine($"Listening on 0.0.0.0:{_port}.");
 
         try
         {
