@@ -1,10 +1,12 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.Versioning;
 using FarShell.ConPTY;
 using FarShell.Protocol;
 
 namespace FarShell.Broker;
 
+[SupportedOSPlatform("windows10.0.17763")]
 internal sealed class BrokerServer
 {
     private static readonly TerminalSize DefaultTerminalSize = new(120, 30);

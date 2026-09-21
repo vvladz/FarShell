@@ -4,6 +4,11 @@ const int defaultPort = 8022;
 
 try
 {
+    if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
+    {
+        throw new PlatformNotSupportedException("FarShell requires Windows 10 version 1809 or later.");
+    }
+
     var port = args.Length switch
     {
         0 => defaultPort,

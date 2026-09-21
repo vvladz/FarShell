@@ -2,6 +2,11 @@ using FarShell.Client;
 
 try
 {
+    if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
+    {
+        throw new PlatformNotSupportedException("FarShell requires Windows 10 version 1809 or later.");
+    }
+
     var endpoint = ClientEndpoint.Parse(args);
     using var consoleMode = ConsoleModeScope.EnableRawVirtualTerminalMode();
 

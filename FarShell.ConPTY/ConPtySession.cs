@@ -269,6 +269,10 @@ public sealed class ConPtySession : IDisposable
                 StartupInfo = new StartupInfo
                 {
                     Size = Marshal.SizeOf<StartupInfoEx>(),
+                    Flags = NativeMethods.StartfUseStdHandles,
+                    StandardInput = IntPtr.Zero,
+                    StandardOutput = IntPtr.Zero,
+                    StandardError = IntPtr.Zero,
                 },
                 AttributeList = attributeList,
             };

@@ -35,7 +35,8 @@ file transfer.
 ## Requirements
 
 - Windows 10 version 1809 (build 17763) or later; Windows 11 is recommended.
-- .NET 8 SDK or a newer SDK capable of targeting .NET 8.
+- .NET 8 x64 runtime for release binaries; the .NET 8 SDK or a newer SDK
+  capable of targeting .NET 8 for source builds.
 - PowerShell 7 available as `pwsh.exe` on `PATH`.
 - Windows Terminal for the intended interactive experience.
 
@@ -46,6 +47,45 @@ From the solution directory:
 ```powershell
 dotnet build .\FarShell.sln
 ```
+
+## ToolDock release
+
+The release workflow builds framework-dependent, single-file Windows x64
+executables. The target machine must have the .NET 8 x64 runtime installed.
+Every `v*` tag publishes these GitHub Release assets:
+
+- `farshell-win-x64.zip` contains `FarShell.Broker.exe` at its root and is the
+  asset managed by ToolDock;
+- `farshell-client-win-x64.zip` contains `FarShell.Client.exe` at its root for
+  machines initiating terminal connections;
+- a matching `.sha256` file is published for each archive.
+
+Use this ToolDock catalog entry for the broker:
+
+```json
+{
+  "tools": {
+    "farshell": {
+      "repo": "vvladz/FarShell",
+      "asset": "farshell-win-x64.zip",
+      "executable": "FarShell.Broker.exe",
+      "enabled": true,
+      "autostart": true,
+      "restart": true
+    }
+  }
+}
+```
+
+ToolDock starts and supervises the broker; it does not start the interactive
+client. The client archive is installed or copied separately on the machine
+from which the connection is initiated.
+
+> [!IMPORTANT]
+> Packaging FarShell for ToolDock does not change the current PoC boundaries.
+> The broker still listens on loopback, serves one client at a time, and has no
+> authentication or encryption. The session and identity documents describe
+> planned behavior, not functionality included in this release.
 
 ## Run the local PoC
 
