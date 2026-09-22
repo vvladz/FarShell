@@ -53,7 +53,9 @@ dotnet build .\FarShell.sln
 
 The release workflow builds framework-dependent, single-file Windows x64
 executables. The target machine must have the .NET 10 x64 runtime installed.
-Every `v*` tag publishes these GitHub Release assets:
+Every successful push to `master` creates the next patch release automatically;
+rerunning the workflow for the same commit reuses its existing tag. A pushed
+`v*` tag can also publish a release. Each release contains these assets:
 
 - `farshell-win-x64.zip` contains `FarShell.Broker.exe` at its root and is the
   asset managed by ToolDock;
