@@ -8,7 +8,7 @@ Windows user's existing interactive session.
 Windows Terminal
     -> FarShell.Client
     -> TCP binary protocol
-    -> FarShell.Broker on 127.0.0.1:8022
+    -> FarShell.Broker on 0.0.0.0:8022
     -> Windows ConPTY
     -> pwsh.exe
 ```
@@ -23,7 +23,8 @@ This PoC contains exactly four projects:
 
 - `FarShell.Client` — transparent local terminal input/output and resize
   forwarding.
-- `FarShell.Broker` — one active client at a time on loopback port 8022.
+- `FarShell.Broker` — one active client at a time on all IPv4 interfaces on
+  port 8022.
 - `FarShell.Protocol` — binary framing and control payloads.
 - `FarShell.ConPTY` — the small Windows API wrapper that owns the pseudoconsole
   and child process.
@@ -35,8 +36,7 @@ file transfer.
 ## Requirements
 
 - Windows 10 version 1809 (build 17763) or later; Windows 11 is recommended.
-- .NET 8 x64 runtime for release binaries; the .NET 8 SDK or a newer SDK
-  capable of targeting .NET 8 for source builds.
+- .NET 10 x64 runtime for release binaries; the .NET 10 SDK for source builds.
 - PowerShell 7 available as `pwsh.exe` on `PATH`.
 - Windows Terminal for the intended interactive experience.
 
@@ -51,7 +51,7 @@ dotnet build .\FarShell.sln
 ## ToolDock release
 
 The release workflow builds framework-dependent, single-file Windows x64
-executables. The target machine must have the .NET 8 x64 runtime installed.
+executables. The target machine must have the .NET 10 x64 runtime installed.
 Every `v*` tag publishes these GitHub Release assets:
 
 - `farshell-win-x64.zip` contains `FarShell.Broker.exe` at its root and is the
@@ -83,9 +83,10 @@ from which the connection is initiated.
 
 > [!IMPORTANT]
 > Packaging FarShell for ToolDock does not change the current PoC boundaries.
-> The broker still listens on loopback, serves one client at a time, and has no
-> authentication or encryption. The session and identity documents describe
-> planned behavior, not functionality included in this release.
+> The broker listens on all IPv4 interfaces, serves one client at a time, and
+> has no authentication or encryption. Restrict inbound TCP port 8022 to
+> trusted clients. The session and identity documents describe planned
+> behavior, not functionality included in this release.
 
 ## Run the local PoC
 
@@ -97,7 +98,7 @@ In the interactive Windows/Entra session that must own all shell processes:
 dotnet run --project .\FarShell.Broker
 ```
 
-The broker prints its loopback endpoint. In the second tab:
+The broker prints its wildcard listening endpoint. In the second tab:
 
 ```powershell
 dotnet run --project .\FarShell.Client
@@ -112,12 +113,13 @@ dotnet run --project .\FarShell.Client -- 127.0.0.1 8022
 For direct executable use after building:
 
 ```powershell
-.\FarShell.Client\bin\Debug\net8.0-windows10.0.17763.0\FarShell.Client.exe 127.0.0.1 8022
+.\FarShell.Client\bin\Debug\net10.0-windows\FarShell.Client.exe 127.0.0.1 8022
 ```
 
-Only after the local ConPTY round trip passes should an external encrypted
-carrier be considered. The broker is deliberately bound to `127.0.0.1`; do not
-expose this unauthenticated PoC directly to a network.
+Verify the local ConPTY round trip first. The broker also accepts direct remote
+connections, but the protocol is neither authenticated nor encrypted. Limit
+the Windows Firewall rule to trusted source addresses and do not expose the
+broker to an untrusted network.
 
 ## Protocol
 
