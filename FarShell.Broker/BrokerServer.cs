@@ -1,7 +1,7 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.Versioning;
-using FarShell.ConPTY;
 using FarShell.Protocol;
 
 namespace FarShell.Broker;
@@ -9,114 +9,289 @@ namespace FarShell.Broker;
 [SupportedOSPlatform("windows10.0.17763")]
 internal sealed class BrokerServer
 {
-    private static readonly TerminalSize DefaultTerminalSize = new(120, 30);
-    private readonly int _port;
+    private readonly BrokerOptions _options;
+    private readonly IConnectionAuthenticator _authenticator;
+    private readonly SessionManager _sessions;
+    private readonly ConcurrentDictionary<long, Task> _connections = new();
+    private readonly TaskCompletionSource<int> _listeningPort =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private long _nextConnectionId;
 
-    internal BrokerServer(int port)
+    internal BrokerServer(BrokerOptions options)
+        : this(options, new AnonymousConnectionAuthenticator(), new OwnerSessionAuthorizer())
     {
-        _port = port;
     }
+
+    internal BrokerServer(
+        BrokerOptions options,
+        IConnectionAuthenticator authenticator,
+        ISessionAuthorizer authorizer)
+    {
+        _options = options;
+        _authenticator = authenticator;
+        _sessions = new SessionManager(options.MaxSessions, authorizer);
+    }
+
+    internal Task<int> ListeningPort => _listeningPort.Task;
 
     internal async Task RunAsync(CancellationToken cancellationToken)
     {
-        var listener = new TcpListener(IPAddress.Any, _port);
-        listener.Start(backlog: 1);
-        Console.WriteLine($"Listening on 0.0.0.0:{_port}.");
+        using var runCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var connectionSlots = new SemaphoreSlim(
+            _options.MaxConnections,
+            _options.MaxConnections);
+        var listener = new TcpListener(IPAddress.Any, _options.Port);
+        listener.Start(backlog: _options.MaxConnections);
+        var listeningPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+        _listeningPort.TrySetResult(listeningPort);
+        Console.WriteLine($"Listening on 0.0.0.0:{listeningPort}.");
 
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                using var client = await listener.AcceptTcpClientAsync(cancellationToken);
+                var client = await listener.AcceptTcpClientAsync(cancellationToken);
                 client.NoDelay = true;
-                var remoteEndpoint = client.Client.RemoteEndPoint;
-                Console.WriteLine($"Client connected from {remoteEndpoint}.");
 
-                try
+                if (!connectionSlots.Wait(0))
                 {
-                    await HandleClientAsync(client, cancellationToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception exception)
-                {
-                    Console.Error.WriteLine($"Session error: {exception.Message}");
+                    Console.Error.WriteLine(
+                        $"Connection rejected from {client.Client.RemoteEndPoint}: limit reached.");
+                    client.Dispose();
+                    continue;
                 }
 
-                Console.WriteLine($"Client disconnected from {remoteEndpoint}.");
+                var connectionId = Interlocked.Increment(ref _nextConnectionId);
+                var task = TrackConnectionAsync(
+                    client,
+                    connectionSlots,
+                    runCancellation.Token);
+                _connections[connectionId] = task;
+                RemoveCompletedConnections();
             }
         }
         finally
         {
             listener.Stop();
+            runCancellation.Cancel();
+            await Task.WhenAll(_connections.Values.ToArray());
+            await _sessions.DisposeAsync();
         }
     }
 
-    private static async Task HandleClientAsync(
+    private async Task TrackConnectionAsync(
+        TcpClient client,
+        SemaphoreSlim connectionSlots,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await HandleConnectionSafelyAsync(client, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            client.Dispose();
+            Console.Error.WriteLine($"Connection error: {exception.Message}");
+        }
+        finally
+        {
+            connectionSlots.Release();
+        }
+    }
+
+    private void RemoveCompletedConnections()
+    {
+        foreach (var connection in _connections)
+        {
+            if (connection.Value.IsCompleted)
+            {
+                _connections.TryRemove(connection.Key, out _);
+            }
+        }
+    }
+
+    private async Task HandleConnectionSafelyAsync(
         TcpClient client,
         CancellationToken cancellationToken)
     {
-        var transport = client.GetStream();
-        using var writer = new FrameWriter(transport);
+        using var connection = new ConnectionContext(client, cancellationToken);
+        Console.WriteLine($"Client connected from {connection.RemoteEndpoint}.");
 
-        var firstFrame = await FrameCodec.ReadAsync(transport, cancellationToken);
-        if (firstFrame is null)
+        try
+        {
+            await NegotiateAsync(connection);
+            connection.Identity = await _authenticator.AuthenticateAsync(
+                connection,
+                connection.CancellationToken);
+            await DispatchAsync(connection);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Broker shutdown cancels all active connections.
+        }
+        catch (Exception exception)
+        {
+            await TrySendErrorAsync(connection, GetClientError(exception));
+            Console.Error.WriteLine($"Session error: {exception.Message}");
+        }
+        finally
+        {
+            Console.WriteLine($"Client disconnected from {connection.RemoteEndpoint}.");
+        }
+    }
+
+    private async Task NegotiateAsync(ConnectionContext connection)
+    {
+        using var handshakeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            connection.CancellationToken);
+        handshakeCancellation.CancelAfter(_options.HandshakeTimeout);
+
+        ProtocolFrame? hello;
+        try
+        {
+            hello = await FrameCodec.ReadAsync(
+                connection.Transport,
+                handshakeCancellation.Token);
+        }
+        catch (OperationCanceledException) when (!connection.CancellationToken.IsCancellationRequested)
+        {
+            throw new ProtocolException("Protocol handshake timed out.");
+        }
+
+        if (hello is null || hello.Type != MessageType.Hello)
+        {
+            throw new ProtocolException("Client must start with HELLO.");
+        }
+
+        var version = ProtocolPayloads.DecodeVersion(hello.Payload);
+        if (version != ProtocolPayloads.CurrentVersion)
+        {
+            throw new ProtocolException(
+                $"Unsupported protocol version {version}; expected {ProtocolPayloads.CurrentVersion}.");
+        }
+
+        connection.ProtocolVersion = version;
+        await connection.Writer.WriteAsync(
+            MessageType.HelloAck,
+            ProtocolPayloads.EncodeVersion(version),
+            handshakeCancellation.Token);
+    }
+
+    private async Task DispatchAsync(ConnectionContext connection)
+    {
+        var request = await FrameCodec.ReadAsync(
+            connection.Transport,
+            connection.CancellationToken);
+        if (request is null)
         {
             return;
         }
 
-        var initialSize = firstFrame.Type == MessageType.Resize
-            ? ProtocolPayloads.DecodeResize(firstFrame.Payload)
-            : DefaultTerminalSize;
-        var pendingFrame = firstFrame.Type == MessageType.Resize ? null : firstFrame;
+        switch (request.Type)
+        {
+            case MessageType.ListSessions:
+                ProtocolPayloads.RequireEmpty(request);
+                await connection.Writer.WriteAsync(
+                    MessageType.SessionList,
+                    ProtocolPayloads.EncodeSessionList(_sessions.List(connection.Identity)),
+                    connection.CancellationToken);
+                return;
 
-        using var session = ConPtySession.Start(initialSize.Columns, initialSize.Rows);
-        var inputTask = PumpInputAsync(
-            transport,
-            writer,
-            session,
-            pendingFrame,
-            cancellationToken);
-        var outputTask = PumpOutputAsync(writer, session, cancellationToken);
+            case MessageType.CreateSession:
+                await CreateAndAttachAsync(
+                    connection,
+                    ProtocolPayloads.DecodeResize(request.Payload));
+                return;
 
-        var completed = await Task.WhenAny(inputTask, outputTask);
-        Exception? failure = null;
-        try
-        {
-            await completed;
-        }
-        catch (Exception exception)
-        {
-            failure = exception;
-        }
-        finally
-        {
-            session.Terminate();
-            client.Dispose();
-            await IgnoreCompletionAsync(inputTask);
-            await IgnoreCompletionAsync(outputTask);
-            await IgnoreCompletionAsync(session.WaitForExitAsync());
-        }
+            case MessageType.AttachSession:
+                var attachRequest = ProtocolPayloads.DecodeAttachSession(request.Payload);
+                await AttachAsync(connection, attachRequest.SessionId, attachRequest.Size);
+                return;
 
-        if (failure is not null)
-        {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            case MessageType.TerminateSession:
+                var sessionId = ProtocolPayloads.DecodeSessionId(request.Payload);
+                await _sessions.TerminateAsync(connection.Identity, sessionId);
+                await connection.Writer.WriteAsync(
+                    MessageType.SessionTerminated,
+                    ProtocolPayloads.EncodeSessionId(sessionId),
+                    connection.CancellationToken);
+                return;
+
+            default:
+                throw new ProtocolException($"Unsupported session operation: {request.Type}.");
         }
     }
 
-    private static async Task PumpInputAsync(
-        Stream transport,
-        FrameWriter writer,
-        ConPtySession session,
-        ProtocolFrame? pendingFrame,
-        CancellationToken cancellationToken)
+    private async Task CreateAndAttachAsync(
+        ConnectionContext connection,
+        TerminalSize size)
     {
-        var frame = pendingFrame;
+        var session = _sessions.Create(connection.Identity, size);
+        await RunAttachedAsync(connection, session, size, MessageType.SessionCreated);
+    }
+
+    private async Task AttachAsync(
+        ConnectionContext connection,
+        Guid sessionId,
+        TerminalSize size)
+    {
+        var session = _sessions.Get(connection.Identity, sessionId);
+        await RunAttachedAsync(connection, session, size, MessageType.SessionAttached);
+    }
+
+    private static async Task RunAttachedAsync(
+        ConnectionContext connection,
+        ShellSession session,
+        TerminalSize size,
+        MessageType responseType)
+    {
+        var attachment = session.ReserveAttachment(connection);
+        try
+        {
+            await connection.Writer.WriteAsync(
+                responseType,
+                ProtocolPayloads.EncodeSessionId(session.Id),
+                connection.CancellationToken);
+            session.Activate(attachment, size);
+            try
+            {
+                await PumpAttachedConnectionAsync(connection, session, attachment);
+            }
+            catch (IOException exception) when (exception is not ProtocolException)
+            {
+                // A broken transport detaches the client without ending the session.
+            }
+            catch (SocketException)
+            {
+                // A reset TCP connection has the same detach semantics.
+            }
+        }
+        finally
+        {
+            session.Detach(attachment);
+        }
+    }
+
+    private static async Task PumpAttachedConnectionAsync(
+        ConnectionContext connection,
+        ShellSession session,
+        SessionAttachment attachment)
+    {
         while (true)
         {
-            frame ??= await FrameCodec.ReadAsync(transport, cancellationToken);
+            var readTask = FrameCodec.ReadAsync(
+                connection.Transport,
+                connection.CancellationToken).AsTask();
+            var completed = await Task.WhenAny(readTask, session.Completion);
+            if (completed == session.Completion)
+            {
+                await session.Completion;
+                connection.Cancel();
+                await IgnoreCompletionAsync(readTask);
+                return;
+            }
+
+            var frame = await readTask;
             if (frame is null)
             {
                 return;
@@ -125,72 +300,61 @@ internal sealed class BrokerServer
             switch (frame.Type)
             {
                 case MessageType.DataIn:
-                    await session.Input.WriteAsync(frame.Payload, cancellationToken);
-                    await session.Input.FlushAsync(cancellationToken);
+                    await session.WriteInputAsync(
+                        attachment,
+                        frame.Payload,
+                        connection.CancellationToken);
                     break;
 
                 case MessageType.Resize:
-                    var size = ProtocolPayloads.DecodeResize(frame.Payload);
-                    session.Resize(size.Columns, size.Rows);
+                    session.Resize(attachment, ProtocolPayloads.DecodeResize(frame.Payload));
                     break;
 
                 case MessageType.Ping:
-                    RequireEmpty(frame);
-                    await writer.WriteAsync(MessageType.Pong, ReadOnlyMemory<byte>.Empty, cancellationToken);
+                    ProtocolPayloads.RequireEmpty(frame);
+                    await connection.Writer.WriteAsync(
+                        MessageType.Pong,
+                        ReadOnlyMemory<byte>.Empty,
+                        connection.CancellationToken);
                     break;
 
                 case MessageType.Pong:
-                    RequireEmpty(frame);
+                    ProtocolPayloads.RequireEmpty(frame);
                     break;
 
-                case MessageType.Exit:
+                case MessageType.DetachSession:
+                    ProtocolPayloads.RequireEmpty(frame);
                     return;
 
-                case MessageType.DataOut:
-                    throw new ProtocolException("Client cannot send DATA_OUT.");
-
                 default:
-                    throw new ProtocolException($"Unsupported client message: {frame.Type}.");
+                    throw new ProtocolException(
+                        $"Unsupported message while attached: {frame.Type}.");
             }
-
-            frame = null;
         }
     }
 
-    private static async Task PumpOutputAsync(
-        FrameWriter writer,
-        ConPtySession session,
-        CancellationToken cancellationToken)
+    private static async Task TrySendErrorAsync(
+        ConnectionContext connection,
+        string message)
     {
-        var exitTask = session.WaitForExitAsync();
-        var buffer = new byte[32 * 1024];
-        while (true)
+        try
         {
-            var bytesRead = await session.Output.ReadAsync(buffer, cancellationToken);
-            if (bytesRead == 0)
-            {
-                break;
-            }
-
-            await writer.WriteAsync(
-                MessageType.DataOut,
-                buffer.AsMemory(0, bytesRead),
-                cancellationToken);
+            await connection.Writer.WriteAsync(
+                MessageType.Error,
+                ProtocolPayloads.EncodeError(message),
+                connection.CancellationToken);
         }
-
-        var exitCode = await exitTask;
-        await writer.WriteAsync(
-            MessageType.Exit,
-            ProtocolPayloads.EncodeExitCode(exitCode),
-            cancellationToken);
+        catch
+        {
+            // The original failure remains the useful diagnostic.
+        }
     }
 
-    private static void RequireEmpty(ProtocolFrame frame)
+    private static string GetClientError(Exception exception)
     {
-        if (frame.Payload.Length != 0)
-        {
-            throw new ProtocolException($"{frame.Type} payload must be empty.");
-        }
+        return exception is ProtocolException or SessionOperationException
+            ? exception.Message
+            : "Session operation failed.";
     }
 
     private static async Task IgnoreCompletionAsync(Task task)
@@ -201,9 +365,7 @@ internal sealed class BrokerServer
         }
         catch
         {
-            // The first completed task determines the session result. Remaining
-            // operations are interrupted during coordinated cleanup.
+            // Connection cancellation interrupts the pending protocol read.
         }
     }
-
 }

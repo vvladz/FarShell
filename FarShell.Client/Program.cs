@@ -7,9 +7,19 @@ try
         throw new PlatformNotSupportedException("FarShell requires Windows 10 version 1809 or later.");
     }
 
-    var endpoint = ClientEndpoint.Parse(args);
-    using var consoleMode = ConsoleModeScope.EnableRawVirtualTerminalMode();
+    var options = ClientOptions.Parse(args);
+    var client = new RemoteTerminalClient(options.Endpoint.Host, options.Endpoint.Port);
+    if (!options.IsInteractive)
+    {
+        return options.Operation switch
+        {
+            ClientOperation.List => await client.ListAsync(),
+            ClientOperation.Terminate => await client.TerminateAsync(options.SessionId!.Value),
+            _ => throw new InvalidOperationException("Unsupported non-interactive operation."),
+        };
+    }
 
+    using var consoleMode = ConsoleModeScope.EnableRawVirtualTerminalMode();
     Console.CancelKeyPress += (_, eventArgs) =>
     {
         // ENABLE_PROCESSED_INPUT is disabled in the interactive case, so Ctrl+C
@@ -17,8 +27,9 @@ try
         eventArgs.Cancel = true;
     };
 
-    var client = new RemoteTerminalClient(endpoint.Host, endpoint.Port);
-    return await client.RunAsync();
+    return options.Operation == ClientOperation.Create
+        ? await client.CreateAsync()
+        : await client.AttachAsync(options.SessionId!.Value);
 }
 catch (Exception exception)
 {
