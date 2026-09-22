@@ -1,7 +1,7 @@
 # FarShell
 
-FarShell is a minimal Windows-only proof of concept for forwarding a local
-Windows Terminal session to a PowerShell process running inside a corporate
+FarShell is a minimal Windows-only proof of concept for forwarding a Windows
+Terminal session to a PowerShell process running inside a corporate
 Windows user's existing interactive session.
 
 ```text
@@ -19,18 +19,19 @@ interactive Entra desktop session. `pwsh.exe` is then created by
 
 ## Scope
 
-This PoC contains exactly four projects:
+This PoC contains five projects:
 
 - `FarShell.Client` — transparent local terminal input/output and resize
   forwarding.
-- `FarShell.Broker` — one active client at a time on all IPv4 interfaces on
-  port 8022.
+- `FarShell.Broker` — concurrent connections and in-process shell sessions on
+  all IPv4 interfaces on port 8022.
 - `FarShell.Protocol` — binary framing and control payloads.
 - `FarShell.ConPTY` — the small Windows API wrapper that owns the pseudoconsole
   and child process.
+- `FarShell.Tests` — protocol and Windows end-to-end session lifecycle tests.
 
 It intentionally has no SSH implementation, authentication, encryption,
-reconnect, persistent sessions, Windows service, GUI, terminal emulator, or
+cross-restart session persistence, Windows service, GUI, terminal emulator, or
 file transfer.
 
 ## Requirements
@@ -83,10 +84,9 @@ from which the connection is initiated.
 
 > [!IMPORTANT]
 > Packaging FarShell for ToolDock does not change the current PoC boundaries.
-> The broker listens on all IPv4 interfaces, serves one client at a time, and
-> has no authentication or encryption. Restrict inbound TCP port 8022 to
-> trusted clients. The session and identity documents describe planned
-> behavior, not functionality included in this release.
+> The broker listens on all IPv4 interfaces and has no authentication or
+> encryption. All connections currently share one anonymous session namespace.
+> Restrict inbound TCP port 8022 to trusted clients.
 
 ## Run the local PoC
 
@@ -110,6 +110,23 @@ The client defaults to `127.0.0.1:8022`. An endpoint can be supplied explicitly:
 dotnet run --project .\FarShell.Client -- 127.0.0.1 8022
 ```
 
+The default command creates and attaches to a new session. The client prints
+the new session ID before terminal forwarding starts. Session management uses
+the same optional host and port suffix:
+
+```powershell
+dotnet run --project .\FarShell.Client -- --list 127.0.0.1 8022
+dotnet run --project .\FarShell.Client -- --attach <session-id> 127.0.0.1 8022
+dotnet run --project .\FarShell.Client -- --terminate <session-id> 127.0.0.1 8022
+```
+
+Broker resource limits and the handshake timeout are configurable:
+
+```powershell
+dotnet run --project .\FarShell.Broker -- 8022 `
+  --max-connections 32 --max-sessions 16 --handshake-timeout-seconds 10
+```
+
 For direct executable use after building:
 
 ```powershell
@@ -131,7 +148,9 @@ Every frame is:
 N bytes  payload
 ```
 
-The maximum payload is 16 MiB.
+The maximum payload is 16 MiB. Every connection starts with `HELLO` and
+`HELLO_ACK` carrying protocol version `1` before it may perform a session
+operation.
 
 | Value | Message | Direction | Payload |
 |---:|---|---|---|
@@ -140,7 +159,15 @@ The maximum payload is 16 MiB.
 | 3 | `RESIZE` | client -> broker | columns and rows as two little-endian Int32 values |
 | 4 | `PING` | either | empty |
 | 5 | `PONG` | either | empty |
-| 6 | `EXIT` | either | empty from client; broker sends a little-endian Int32 process exit code |
+| 16 | `HELLO` | client -> broker | little-endian Int32 protocol version |
+| 17 | `HELLO_ACK` | broker -> client | selected protocol version |
+| 18–19 | `LIST_SESSIONS` / `SESSION_LIST` | request / response | visible session metadata |
+| 20–21 | `CREATE_SESSION` / `SESSION_CREATED` | request / response | terminal size / session ID |
+| 22–23 | `ATTACH_SESSION` / `SESSION_ATTACHED` | request / response | session ID and size / session ID |
+| 24 | `DETACH_SESSION` | client -> broker | empty |
+| 25–26 | `TERMINATE_SESSION` / `SESSION_TERMINATED` | request / response | session ID |
+| 27 | `SESSION_EXITED` | broker -> client | session ID and little-endian Int32 exit code |
+| 28 | `ERROR` | broker -> client | UTF-8 error text |
 
 Terminal data is never converted to strings. Partial UTF-8 sequences and VT
 escape sequences therefore cross the transport unchanged.
@@ -154,13 +181,16 @@ exit. Terminal dimensions are checked every 200 ms and changes become
 
 ## Session lifecycle
 
-1. The client connects and sends the initial terminal size.
-2. The broker creates one ConPTY and starts `pwsh.exe -NoLogo`.
-3. Client input and ConPTY output are proxied as raw bytes.
-4. Client disconnect or client `EXIT` disposes the ConPTY and closes a Windows
-   Job Object, terminating the shell and its complete child process tree.
-5. Normal shell exit is returned to the client in a broker `EXIT` frame.
-6. The broker then waits for the next client.
+1. The client negotiates protocol version 1 and requests create or attach.
+2. A new session creates one ConPTY and starts `pwsh.exe -NoLogo`.
+3. Client input and ConPTY output are proxied as raw bytes while attached.
+4. Client disconnect detaches without terminating the shell. The broker keeps
+   draining and discarding ConPTY output so the detached process cannot block
+   on a full output pipe.
+5. Attach reserves the session exclusively and resizes ConPTY to the new
+   terminal dimensions. Detached output is not replayed.
+6. Normal shell exit or explicit termination removes the session. Broker
+   shutdown closes every session's Job Object and complete process tree.
 
 ## Acceptance checklist
 
@@ -187,17 +217,30 @@ Finally run Copilot CLI and repeat the interactive checks. The acceptance
 criterion is that remote Codex/Copilot behavior is materially equivalent to
 running each tool locally in Windows Terminal on the corporate laptop.
 
+Then verify the session lifecycle:
+
+- [ ] two clients can use independent shells concurrently
+- [ ] closing a client leaves its session visible as detached in `--list`
+- [ ] `--attach` resumes input and output and rejects a competing attachment
+- [ ] detached output is discarded without blocking the shell
+- [ ] `--terminate` removes the session and its complete process tree
+- [ ] broker shutdown removes every remaining session and process tree
+
 ## Known PoC boundaries
 
-- A single active client is handled at a time.
-- There is no recovery after a broken connection; the child session is ended.
-- `PING`/`PONG` only proves the stream is responsive; it is not reconnect logic.
+- Sessions exist only while the broker process remains alive.
+- A session accepts one attachment at a time; multiple sessions and connections
+  may run concurrently.
+- Detached terminal output is discarded and cannot be replayed.
+- All clients currently use one anonymous owner identity and can see the same
+  session namespace.
+- `PING`/`PONG` only proves the stream is responsive.
 - Broker startup must remain in the intended interactive user session. Running
   it as `LocalSystem` or another account changes the execution identity and
   defeats the design.
 
-The agreed plan for multi-session support, detach/attach persistence, session
-listing, and future authentication boundaries is documented in
+The implemented multi-session lifecycle and future authentication boundaries
+are documented in
 [`SESSION_ARCHITECTURE.md`](SESSION_ARCHITECTURE.md).
 
 The proposed broker-approved client identity flow is documented in

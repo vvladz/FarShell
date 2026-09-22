@@ -1,10 +1,11 @@
-# Session Architecture Plan
+# Session Architecture
 
 ## Status
 
-This document records the agreed direction for multi-session support,
-in-process session persistence, and an authentication-ready architecture. It
-describes planned behavior, not the current implementation.
+Multi-session support, in-process session persistence, protocol negotiation,
+and the anonymous authorization boundary described here are implemented.
+Client identity enrollment and security-grade authentication remain future
+work.
 
 ## Goals
 
@@ -56,7 +57,7 @@ produce a redraw. Full screen restoration is explicitly best effort; forcing an
 intermediate fake size or injecting application-specific redraw input is out of
 scope.
 
-## Proposed broker structure
+## Broker structure
 
 ### `ConnectionContext`
 
@@ -101,29 +102,29 @@ for earlier clients to disconnect. A connection supervisor tracks all handler
 tasks, owns each accepted client, applies connection limits, and awaits clean
 shutdown. Session lifetime is delegated to `SessionManager`.
 
-## Protocol direction
+## Protocol
 
-Introduce a versioned handshake before any session operation or ConPTY process
-creation. Extend the existing framed protocol with control operations equivalent
-to:
+Every connection performs a versioned handshake before any session operation or
+ConPTY process creation. Protocol version 1 contains:
 
 - `HELLO` / `HELLO_ACK`;
 - `LIST_SESSIONS` / `SESSION_LIST`;
 - `CREATE_SESSION` / `SESSION_CREATED`;
 - `ATTACH_SESSION` / `SESSION_ATTACHED`;
 - `DETACH_SESSION`;
-- `TERMINATE_SESSION`;
+- `TERMINATE_SESSION` / `SESSION_TERMINATED`;
 - `SESSION_EXITED`.
+- `ERROR`.
 
 `DATA_IN`, `DATA_OUT`, `RESIZE`, `PING`, and `PONG` remain data-plane messages
 for an attached session. Disconnect is treated as detach. Shell exit and an
 explicit terminate request are distinct from detach.
 
-This will be a breaking protocol revision. Client and broker are updated and
+This is a breaking protocol revision. Client and broker are updated and
 deployed together; compatibility with the current unversioned PoC protocol is
 not required.
 
-## CLI direction
+## CLI
 
 ```text
 FarShell.Client [host] [port]
@@ -137,8 +138,8 @@ FarShell.Client --terminate <session-id> [host] [port]
 - `--attach` attaches exclusively to an existing detached session.
 - `--terminate` terminates a session and its complete process tree.
 
-The exact display format of `--list` may evolve, but it should initially include
-the session ID, attached/detached state, creation time, and terminal dimensions.
+`--list` includes the session ID, attached/detached state, creation time, and
+terminal dimensions.
 
 ## Identity and authentication boundary
 
@@ -157,18 +158,21 @@ must not depend on that specific mechanism.
 - A secure authenticator may later provide the identity without
   changing `ShellSession` or `SessionManager`.
 
-Until client identity is implemented, all local connections use one anonymous
+Until client identity is implemented, all connections use one anonymous
 identity and therefore share one visible session namespace. The plaintext
 identity proposal must not be treated as protection against a network attacker.
 
 ## Limits and failure handling
 
-The implementation must include configurable bounds for:
+The broker provides configurable bounds for:
 
 - concurrent connections;
 - active shell sessions;
-- handshake duration;
-- detached session lifetime, if an expiry policy is enabled.
+- handshake duration.
+
+Defaults are 32 concurrent connections, 16 active sessions, and a 10-second
+handshake timeout. No detached-session expiry policy is enabled; one may be
+added later if operational use requires it.
 
 There is no detached-output memory or disk quota because detached output is
 discarded. A failed connection only detaches its session. A failed session only
@@ -178,18 +182,11 @@ The current process wait uses one blocked ThreadPool worker per session. This is
 acceptable for a small number of sessions, but it should be replaced with a
 registered Windows handle wait before targeting high session counts.
 
-## Implementation sequence
+## Remaining sequence
 
-1. Add protocol negotiation and `ConnectionContext`.
-2. Introduce the anonymous client identity and authorization boundary.
-3. Extract `ShellSession` and `SessionManager` from connection handling.
-4. Make the broker accept and supervise multiple connections concurrently.
-5. Add session control messages and the corresponding CLI options.
-6. Implement detach/attach with continuous drain-and-discard output handling.
-7. Add limits, coordinated shutdown, and failure-isolation tests.
-8. Integrate the client identity enrollment described in `AUTH_PROPOSAL.md`
+1. Integrate the client identity enrollment described in `AUTH_PROPOSAL.md`
    without changing session ownership or lifecycle semantics.
-9. Replace the identity provider later if security-grade authentication is
+2. Replace the identity provider later if security-grade authentication is
    required.
 
 ## Acceptance criteria

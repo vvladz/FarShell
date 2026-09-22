@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Protocol", "FarShe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.ConPTY", "FarShell.ConPTY\FarShell.ConPTY.csproj", "{FDE964AC-9B7D-47D3-A3CA-2D0CC0B8A0E4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Tests", "FarShell.Tests\FarShell.Tests.csproj", "{10802BB9-A957-4855-84BC-05AC0824C1D3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -69,6 +71,18 @@ Global
 		{FDE964AC-9B7D-47D3-A3CA-2D0CC0B8A0E4}.Release|x64.Build.0 = Release|Any CPU
 		{FDE964AC-9B7D-47D3-A3CA-2D0CC0B8A0E4}.Release|x86.ActiveCfg = Release|Any CPU
 		{FDE964AC-9B7D-47D3-A3CA-2D0CC0B8A0E4}.Release|x86.Build.0 = Release|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Debug|x64.Build.0 = Debug|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Debug|x86.Build.0 = Debug|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Release|x64.ActiveCfg = Release|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Release|x64.Build.0 = Release|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Release|x86.ActiveCfg = Release|Any CPU
+		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
