@@ -98,6 +98,20 @@ An endpoint supplied explicitly on the command line overrides
 dotnet run --project .\FarShell.Client -- 127.0.0.1 8022
 ```
 
+The client coalesces adjacent terminal output for up to 4 ms before rendering
+it. This reduces visible intermediate cursor positions during rapid VT screen
+redraws without changing the terminal byte stream. Set
+`FARSHELL_OUTPUT_BATCH_MS` to change the default for the client, or use
+`--output-batch-ms`; the command-line value takes precedence:
+
+```powershell
+$env:FARSHELL_OUTPUT_BATCH_MS = '8'
+dotnet run --project .\FarShell.Client -- --output-batch-ms 2 127.0.0.1 8022
+```
+
+Valid values are 0 through 100 milliseconds. Use `0` to disable batching and
+restore immediate rendering of every `DATA_OUT` payload.
+
 The default command creates and attaches to a new session. The client prints
 the new session ID before terminal forwarding starts. Session management uses
 the same optional host and port suffix:

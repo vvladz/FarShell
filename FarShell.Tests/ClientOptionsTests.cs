@@ -12,6 +12,7 @@ public sealed class ClientOptionsTests
         Assert.Equal(ClientOperation.Create, options.Operation);
         Assert.Equal("127.0.0.1", options.Endpoint.Host);
         Assert.Equal(8022, options.Endpoint.Port);
+        Assert.Equal(TimeSpan.FromMilliseconds(4), options.OutputBatchDelay);
     }
 
     [Fact]
@@ -61,6 +62,57 @@ public sealed class ClientOptionsTests
         Assert.Equal(sessionId, options.SessionId);
         Assert.Equal("server.example", options.Endpoint.Host);
         Assert.Equal(9000, options.Endpoint.Port);
+    }
+
+    [Fact]
+    public void UsesOutputBatchDelayFromEnvironmentValue()
+    {
+        var options = ClientOptions.Parse(
+            [],
+            defaultOutputBatchMilliseconds: "8");
+
+        Assert.Equal(TimeSpan.FromMilliseconds(8), options.OutputBatchDelay);
+    }
+
+    [Fact]
+    public void CommandLineOutputBatchDelayOverridesEnvironmentValue()
+    {
+        var sessionId = Guid.NewGuid();
+
+        var options = ClientOptions.Parse(
+            [
+                "--attach",
+                sessionId.ToString("N"),
+                "--output-batch-ms",
+                "2",
+                "server",
+                "9000",
+            ],
+            defaultOutputBatchMilliseconds: "8");
+
+        Assert.Equal(ClientOperation.Attach, options.Operation);
+        Assert.Equal(sessionId, options.SessionId);
+        Assert.Equal("server", options.Endpoint.Host);
+        Assert.Equal(9000, options.Endpoint.Port);
+        Assert.Equal(TimeSpan.FromMilliseconds(2), options.OutputBatchDelay);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("101")]
+    [InlineData("invalid")]
+    public void RejectsInvalidOutputBatchDelay(string value)
+    {
+        Assert.Throws<ArgumentException>(
+            () => ClientOptions.Parse([], defaultOutputBatchMilliseconds: value));
+    }
+
+    [Fact]
+    public void RejectsDuplicateOutputBatchDelayOptions()
+    {
+        Assert.Throws<ArgumentException>(
+            () => ClientOptions.Parse(
+                ["--output-batch-ms", "2", "--output-batch-ms", "4"]));
     }
 
     [Fact]

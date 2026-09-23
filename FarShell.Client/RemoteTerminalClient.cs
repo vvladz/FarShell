@@ -9,11 +9,13 @@ internal sealed class RemoteTerminalClient
     private static readonly TimeSpan PingInterval = TimeSpan.FromSeconds(30);
     private readonly string _host;
     private readonly int _port;
+    private readonly TimeSpan _outputBatchDelay;
 
-    internal RemoteTerminalClient(string host, int port)
+    internal RemoteTerminalClient(string host, int port, TimeSpan outputBatchDelay)
     {
         _host = host;
         _port = port;
+        _outputBatchDelay = outputBatchDelay;
     }
 
     internal Task<int> CreateAsync()
@@ -205,13 +207,16 @@ internal sealed class RemoteTerminalClient
         }
     }
 
-    private static async Task<int> ReceiveAsync(
+    private async Task<int> ReceiveAsync(
         Stream transport,
         FrameWriter writer,
         Guid sessionId,
         CancellationToken cancellationToken)
     {
         var standardOutput = Console.OpenStandardOutput();
+        await using var outputBatcher = new TerminalOutputBatcher(
+            standardOutput,
+            _outputBatchDelay);
 
         while (true)
         {
@@ -219,8 +224,7 @@ internal sealed class RemoteTerminalClient
             switch (frame.Type)
             {
                 case MessageType.DataOut:
-                    await standardOutput.WriteAsync(frame.Payload, cancellationToken);
-                    await standardOutput.FlushAsync(cancellationToken);
+                    await outputBatcher.WriteAsync(frame.Payload, cancellationToken);
                     break;
 
                 case MessageType.Ping:

@@ -9,8 +9,12 @@ try
 
     var options = ClientOptions.Parse(
         args,
-        Environment.GetEnvironmentVariable("FARSHELL_SERVER"));
-    var client = new RemoteTerminalClient(options.Endpoint.Host, options.Endpoint.Port);
+        Environment.GetEnvironmentVariable("FARSHELL_SERVER"),
+        Environment.GetEnvironmentVariable("FARSHELL_OUTPUT_BATCH_MS"));
+    var client = new RemoteTerminalClient(
+        options.Endpoint.Host,
+        options.Endpoint.Port,
+        options.OutputBatchDelay);
     if (!options.IsInteractive)
     {
         return options.Operation switch
