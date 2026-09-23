@@ -16,18 +16,19 @@ internal sealed record ClientOptions(
     private const string Usage =
         "Usage: [host] [port] | --list [host] [port] | "
         + "--attach <session-id> [host] [port] | "
-        + "--terminate <session-id> [host] [port]";
+        + "--terminate <session-id> [host] [port]; "
+        + "FARSHELL_SERVER format: host[:port]";
 
     internal bool IsInteractive => Operation is ClientOperation.Create or ClientOperation.Attach;
 
-    internal static ClientOptions Parse(string[] args)
+    internal static ClientOptions Parse(string[] args, string? defaultServer = null)
     {
         if (args.Length == 0 || !args[0].StartsWith("--", StringComparison.Ordinal))
         {
             return new ClientOptions(
                 ClientOperation.Create,
                 null,
-                ParseEndpoint(args));
+                ParseEndpoint(args, defaultServer));
         }
 
         return args[0] switch
@@ -35,16 +36,17 @@ internal sealed record ClientOptions(
             "--list" => new ClientOptions(
                 ClientOperation.List,
                 null,
-                ParseEndpoint(args[1..])),
-            "--attach" => ParseSessionOperation(ClientOperation.Attach, args),
-            "--terminate" => ParseSessionOperation(ClientOperation.Terminate, args),
+                ParseEndpoint(args[1..], defaultServer)),
+            "--attach" => ParseSessionOperation(ClientOperation.Attach, args, defaultServer),
+            "--terminate" => ParseSessionOperation(ClientOperation.Terminate, args, defaultServer),
             _ => throw new ArgumentException(Usage),
         };
     }
 
     private static ClientOptions ParseSessionOperation(
         ClientOperation operation,
-        string[] args)
+        string[] args,
+        string? defaultServer)
     {
         if (args.Length < 2
             || !Guid.TryParse(args[1], out var sessionId)
@@ -53,14 +55,14 @@ internal sealed record ClientOptions(
             throw new ArgumentException(Usage);
         }
 
-        return new ClientOptions(operation, sessionId, ParseEndpoint(args[2..]));
+        return new ClientOptions(operation, sessionId, ParseEndpoint(args[2..], defaultServer));
     }
 
-    private static ClientEndpoint ParseEndpoint(string[] args)
+    private static ClientEndpoint ParseEndpoint(string[] args, string? defaultServer)
     {
         try
         {
-            return ClientEndpoint.Parse(args);
+            return ClientEndpoint.Parse(args, defaultServer);
         }
         catch (ArgumentException)
         {

@@ -7,7 +7,9 @@ try
         throw new PlatformNotSupportedException("FarShell requires Windows 10 version 1809 or later.");
     }
 
-    var options = ClientOptions.Parse(args);
+    var options = ClientOptions.Parse(
+        args,
+        Environment.GetEnvironmentVariable("FARSHELL_SERVER"));
     var client = new RemoteTerminalClient(options.Endpoint.Host, options.Endpoint.Port);
     if (!options.IsInteractive)
     {

@@ -29,6 +29,47 @@ public sealed class ClientOptionsTests
     }
 
     [Fact]
+    public void UsesDefaultServerFromEnvironmentValue()
+    {
+        var options = ClientOptions.Parse([], "server.example:9000");
+
+        Assert.Equal("server.example", options.Endpoint.Host);
+        Assert.Equal(9000, options.Endpoint.Port);
+    }
+
+    [Fact]
+    public void ExplicitEndpointOverridesEnvironmentValue()
+    {
+        var options = ClientOptions.Parse(
+            ["explicit.example", "9001"],
+            "default.example:9000");
+
+        Assert.Equal("explicit.example", options.Endpoint.Host);
+        Assert.Equal(9001, options.Endpoint.Port);
+    }
+
+    [Fact]
+    public void SessionOperationUsesDefaultServerFromEnvironmentValue()
+    {
+        var sessionId = Guid.NewGuid();
+
+        var options = ClientOptions.Parse(
+            ["--attach", sessionId.ToString("N")],
+            "server.example:9000");
+
+        Assert.Equal(ClientOperation.Attach, options.Operation);
+        Assert.Equal(sessionId, options.SessionId);
+        Assert.Equal("server.example", options.Endpoint.Host);
+        Assert.Equal(9000, options.Endpoint.Port);
+    }
+
+    [Fact]
+    public void RejectsInvalidDefaultServer()
+    {
+        Assert.Throws<ArgumentException>(() => ClientOptions.Parse([], "server.example:0"));
+    }
+
+    [Fact]
     public void RejectsUnknownOperation()
     {
         Assert.Throws<ArgumentException>(() => ClientOptions.Parse(["--unknown"]));

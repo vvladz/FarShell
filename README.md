@@ -49,7 +49,7 @@ From the solution directory:
 dotnet build .\FarShell.sln
 ```
 
-## ToolDock release
+## Release artifacts
 
 The release workflow builds framework-dependent, single-file Windows x64
 executables. The target machine must have the .NET 10 x64 runtime installed.
@@ -57,35 +57,12 @@ Every successful push to `master` creates the next patch release automatically;
 rerunning the workflow for the same commit reuses its existing tag. A pushed
 `v*` tag can also publish a release. Each release contains these assets:
 
-- `farshell-win-x64.zip` contains `FarShell.Broker.exe` at its root and is the
-  asset managed by ToolDock;
+- `farshell-win-x64.zip` contains `FarShell.Broker.exe` at its root;
 - `farshell-client-win-x64.zip` contains `FarShell.Client.exe` at its root for
   machines initiating terminal connections;
 - a matching `.sha256` file is published for each archive.
 
-Use this ToolDock catalog entry for the broker:
-
-```json
-{
-  "tools": {
-    "farshell": {
-      "repo": "vvladz/FarShell",
-      "asset": "farshell-win-x64.zip",
-      "executable": "FarShell.Broker.exe",
-      "enabled": true,
-      "autostart": true,
-      "restart": true
-    }
-  }
-}
-```
-
-ToolDock starts and supervises the broker; it does not start the interactive
-client. The client archive is installed or copied separately on the machine
-from which the connection is initiated.
-
 > [!IMPORTANT]
-> Packaging FarShell for ToolDock does not change the current PoC boundaries.
 > The broker listens on all IPv4 interfaces and has no authentication or
 > encryption. All connections currently share one anonymous session namespace.
 > Restrict inbound TCP port 8022 to trusted clients.
@@ -106,7 +83,16 @@ The broker prints its wildcard listening endpoint. In the second tab:
 dotnet run --project .\FarShell.Client
 ```
 
-The client defaults to `127.0.0.1:8022`. An endpoint can be supplied explicitly:
+The client defaults to `127.0.0.1:8022`. Set `FARSHELL_SERVER` to `host[:port]`
+to change the default endpoint for every client operation:
+
+```powershell
+$env:FARSHELL_SERVER = '192.168.1.110:8022'
+dotnet run --project .\FarShell.Client
+```
+
+An endpoint supplied explicitly on the command line overrides
+`FARSHELL_SERVER`:
 
 ```powershell
 dotnet run --project .\FarShell.Client -- 127.0.0.1 8022
