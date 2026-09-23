@@ -9,6 +9,7 @@ internal sealed class ShellSession : IAsyncDisposable
 {
     private readonly object _stateLock = new();
     private readonly ConPtySession _conPty;
+    private readonly SessionFileSendService _fileSender;
     private readonly Task<int> _completion;
     private SessionAttachment? _attachment;
     private TerminalSize _size;
@@ -22,7 +23,12 @@ internal sealed class ShellSession : IAsyncDisposable
         OwnerId = ownerId;
         CreatedAt = DateTimeOffset.UtcNow;
         _size = size.Validate();
-        _conPty = ConPtySession.Start(size.Columns, size.Rows);
+        _fileSender = new SessionFileSendService(id, GetActiveAttachment);
+        _conPty = ConPtySession.Start(
+            size.Columns,
+            size.Rows,
+            environmentVariables: _fileSender.CreateProcessEnvironment());
+        _fileSender.Start();
         _completion = RunAsync();
     }
 
@@ -108,6 +114,18 @@ internal sealed class ShellSession : IAsyncDisposable
         _conPty.Resize(size.Columns, size.Rows);
     }
 
+    internal void HandleFileStatus(
+        SessionAttachment attachment,
+        SessionFileStatus status)
+    {
+        lock (_stateLock)
+        {
+            RequireActiveAttachment(attachment);
+        }
+
+        _fileSender.HandleStatus(attachment, status);
+    }
+
     internal void Detach(SessionAttachment attachment)
     {
         var removed = false;
@@ -164,6 +182,7 @@ internal sealed class ShellSession : IAsyncDisposable
 
         attachment?.Dispose();
         _conPty.Dispose();
+        await _fileSender.DisposeAsync();
     }
 
     private async Task<int> RunAsync()
@@ -258,6 +277,14 @@ internal sealed class ShellSession : IAsyncDisposable
         lock (_stateLock)
         {
             return _terminating;
+        }
+    }
+
+    private SessionAttachment? GetActiveAttachment()
+    {
+        lock (_stateLock)
+        {
+            return _attachment is { IsActive: true } ? _attachment : null;
         }
     }
 

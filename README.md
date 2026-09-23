@@ -21,8 +21,8 @@ interactive Entra desktop session. `pwsh.exe` is then created by
 
 This PoC contains five projects:
 
-- `FarShell.Client` — transparent local terminal input/output and resize
-  forwarding.
+- `FarShell.Client` — transparent local terminal forwarding and bidirectional
+  file transfer.
 - `FarShell.Broker` — concurrent connections and in-process shell sessions on
   all IPv4 interfaces on port 8022.
 - `FarShell.Protocol` — binary framing and control payloads.
@@ -32,7 +32,7 @@ This PoC contains five projects:
 
 It intentionally has no SSH implementation, authentication, encryption,
 cross-restart session persistence, Windows service, GUI, terminal emulator, or
-file transfer.
+directory synchronization.
 
 ## Requirements
 
@@ -122,6 +122,51 @@ dotnet run --project .\FarShell.Client -- --attach <session-id> 127.0.0.1 8022
 dotnet run --project .\FarShell.Client -- --terminate <session-id> 127.0.0.1 8022
 ```
 
+Upload a local file to an exact path on the broker machine, or download a
+broker-side file to an exact local path:
+
+```powershell
+dotnet run --project .\FarShell.Client -- --upload `
+  .\package.zip 'C:\Temp\package.zip' 127.0.0.1 8022
+dotnet run --project .\FarShell.Client -- --download `
+  'C:\Temp\result.log' .\result.log 127.0.0.1 8022
+```
+
+Paths may be relative; a relative local path is resolved from the client
+working directory, while a relative remote path is resolved from the broker
+working directory. The destination directory must already exist. A completed
+transfer replaces an existing destination file. Data is streamed in bounded
+chunks, and an interrupted transfer leaves an existing destination unchanged.
+
+For the common interactive remote-to-local case, start the client from the
+local destination directory, change to the source directory in the remote
+session, and run the broker's `--send` command there:
+
+```powershell
+# The client was started from C:\Local\Destination.
+Set-Location C:\Remote\Source
+FarShell.Broker.exe --send report.zip
+FarShell.Broker.exe --send *.log
+FarShell.Broker.exe --send .\results\*.json
+```
+
+`--send` resolves paths against its own current directory and writes them below
+the directory from which the attached client was started. Relative
+subdirectories are preserved and created locally when needed. Existing files
+are replaced only after their complete contents have arrived.
+
+Every session process inherits the randomized current-user-only control pipe
+name and a `PATH` containing the broker directory. No PowerShell function,
+profile change, or shell-specific bootstrap is used: a shell or application can
+invoke `FarShell.Broker.exe --send` directly. Both broker and client must
+include this support; update them together before using the command.
+
+`--send` accepts literal file names and `*`/`?` wildcards in the final path
+segment. Paths must be relative, may not contain `..`, and may not name a
+directory. One invocation may transfer at most 256 files. An attached client is
+required; completed files from an earlier part of a multi-file invocation
+remain in place if a later file fails.
+
 Broker resource limits and the handshake timeout are configurable:
 
 ```powershell
@@ -151,8 +196,7 @@ N bytes  payload
 ```
 
 The maximum payload is 16 MiB. Every connection starts with `HELLO` and
-`HELLO_ACK` carrying protocol version `1` before it may perform a session
-operation.
+`HELLO_ACK` carrying protocol version `1` before it may perform an operation.
 
 | Value | Message | Direction | Payload |
 |---:|---|---|---|
@@ -170,6 +214,18 @@ operation.
 | 25–26 | `TERMINATE_SESSION` / `SESSION_TERMINATED` | request / response | session ID |
 | 27 | `SESSION_EXITED` | broker -> client | session ID and little-endian Int32 exit code |
 | 28 | `ERROR` | broker -> client | UTF-8 error text |
+| 29 | `UPLOAD_FILE` | client -> broker | little-endian Int64 length and UTF-8 destination path |
+| 30 | `UPLOAD_READY` | broker -> client | empty |
+| 31 | `DOWNLOAD_FILE` | client -> broker | UTF-8 source path |
+| 32 | `FILE_METADATA` | broker -> client | little-endian Int64 length |
+| 33 | `FILE_DATA` | either | raw file chunk |
+| 34 | `FILE_COMPLETED` | broker -> client | empty |
+| 35 | `SESSION_FILE_START` | broker -> attached client | transfer ID, length, and relative path |
+| 36 | `SESSION_FILE_STATUS` | attached client -> broker | transfer ID, state, and optional error |
+| 37 | `SESSION_FILE_END` | broker -> attached client | transfer ID |
+| 38 | `SESSION_FILE_ABORT` | broker -> attached client | failed transfer status |
+| 39 | `SEND_FILES_REQUEST` | session command -> broker pipe | remote root and path patterns |
+| 40 | `SEND_FILES_COMPLETED` | broker pipe -> session command | transferred file count |
 
 Terminal data is never converted to strings. Partial UTF-8 sequences and VT
 escape sequences therefore cross the transport unchanged.
@@ -180,6 +236,20 @@ input/output, and uses UTF-8 console code pages while connected. Consequently,
 to terminate the client. Original console modes and code pages are restored on
 exit. Terminal dimensions are checked every 200 ms and changes become
 `RESIZE` frames handled by `ResizePseudoConsole`.
+
+## File transfer
+
+`--upload` and `--download` each use one separate protocol connection and do
+not require or modify a shell session. File contents remain raw bytes and can
+be larger than the 16 MiB per-frame limit because they are split across
+`FILE_DATA` frames. Destination writes use a temporary file in the destination
+directory and replace the requested file only after the complete declared
+length has been received.
+
+Transfers do not preserve timestamps, attributes, ACLs, alternate data streams,
+or sparse-file layout. Resume, compression, directory recursion, globbing, and
+progress reporting are not implemented by the standalone commands. `--send`
+adds non-recursive file-name globbing for an attached interactive session.
 
 ## Session lifecycle
 
@@ -227,6 +297,9 @@ Then verify the session lifecycle:
 - [ ] detached output is discarded without blocking the shell
 - [ ] `--terminate` removes the session and its complete process tree
 - [ ] broker shutdown removes every remaining session and process tree
+- [ ] `FarShell.Broker.exe --send` resolves from the remote current directory
+  and saves below the client's startup directory
+- [ ] interrupted `--send` leaves an existing local file unchanged
 
 ## Known PoC boundaries
 
@@ -236,6 +309,11 @@ Then verify the session lifecycle:
 - Detached terminal output is discarded and cannot be replayed.
 - All clients currently use one anonymous owner identity and can see the same
   session namespace.
+- The same anonymous, unencrypted connection can read and replace any file
+  accessible to the broker's Windows identity.
+- `--send` can create or replace files below the attached client's startup
+  directory. The broker rejects rooted paths and `..` segments, and the client
+  independently repeats rooted-path and normalized containment checks.
 - `PING`/`PONG` only proves the stream is responsive.
 - Broker startup must remain in the intended interactive user session. Running
   it as `LocalSystem` or another account changes the execution identity and

@@ -7,6 +7,11 @@ try
         throw new PlatformNotSupportedException("FarShell requires Windows 10 version 1809 or later.");
     }
 
+    if (args is ["--send", .. var sendArgs])
+    {
+        return await SendCommand.RunAsync(sendArgs);
+    }
+
     var options = BrokerOptions.Parse(args);
 
     using var shutdown = new CancellationTokenSource();

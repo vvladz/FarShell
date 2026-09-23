@@ -95,6 +95,22 @@ Owns the concurrent session registry and is responsible for:
 - session-count and resource limits;
 - coordinated broker shutdown and completion of all session tasks.
 
+### `SessionFileSendService`
+
+Each `ShellSession` owns one `SessionFileSendService`. It:
+
+- exposes a randomized named pipe restricted to the current Windows user;
+- exposes the pipe name and broker directory to the session process through its
+  environment, independently of the selected shell or application;
+- resolves requested files below the current directory inherited by the
+  `FarShell.Broker.exe --send` process;
+- serializes one transfer at a time to the active attachment;
+- waits for client ready/completed/failed acknowledgements;
+- aborts and cleans an incomplete destination when either side fails.
+
+The broker executable handles the public `--send` command itself, so no
+additional executable, shell function, or profile installation is required.
+
 ### `BrokerServer`
 
 The accept loop creates a `ConnectionContext` and dispatches it without waiting
@@ -104,8 +120,8 @@ shutdown. Session lifetime is delegated to `SessionManager`.
 
 ## Protocol
 
-Every connection performs a versioned handshake before any session operation or
-ConPTY process creation. Protocol version 1 contains:
+Every connection performs a versioned handshake before any session or file
+operation or ConPTY process creation. Protocol version 1 contains:
 
 - `HELLO` / `HELLO_ACK`;
 - `LIST_SESSIONS` / `SESSION_LIST`;
@@ -113,7 +129,13 @@ ConPTY process creation. Protocol version 1 contains:
 - `ATTACH_SESSION` / `SESSION_ATTACHED`;
 - `DETACH_SESSION`;
 - `TERMINATE_SESSION` / `SESSION_TERMINATED`;
-- `SESSION_EXITED`.
+- `SESSION_EXITED`;
+- `UPLOAD_FILE` / `UPLOAD_READY`;
+- `DOWNLOAD_FILE` / `FILE_METADATA`;
+- `FILE_DATA` / `FILE_COMPLETED`;
+- `SESSION_FILE_START` / `SESSION_FILE_STATUS` / `SESSION_FILE_END` /
+  `SESSION_FILE_ABORT`;
+- `SEND_FILES_REQUEST` / `SEND_FILES_COMPLETED` on the per-session local pipe;
 - `ERROR`.
 
 `DATA_IN`, `DATA_OUT`, `RESIZE`, `PING`, and `PONG` remain data-plane messages
@@ -131,12 +153,19 @@ FarShell.Client [host] [port]
 FarShell.Client --list [host] [port]
 FarShell.Client --attach <session-id> [host] [port]
 FarShell.Client --terminate <session-id> [host] [port]
+FarShell.Client --upload <local-path> <remote-path> [host] [port]
+FarShell.Client --download <remote-path> <local-path> [host] [port]
 ```
 
 - The default command creates and attaches to a new session.
 - `--list` prints sessions visible to the current client identity.
 - `--attach` attaches exclusively to an existing detached session.
 - `--terminate` terminates a session and its complete process tree.
+- `--upload` and `--download` stream one file on a connection independent of
+  shell-session attachment.
+- `FarShell.Broker.exe --send` can run under any remote shell or session
+  application, resolves relative file patterns from its current directory, and
+  streams matched files to the attached client's startup directory.
 
 `--list` includes the session ID, attached/detached state, creation time, and
 terminal dimensions.

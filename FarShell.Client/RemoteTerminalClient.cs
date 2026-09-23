@@ -5,17 +5,20 @@ namespace FarShell.Client;
 
 internal sealed class RemoteTerminalClient
 {
+    private const int FileBufferSize = 64 * 1024;
     private static readonly TimeSpan ResizePollInterval = TimeSpan.FromMilliseconds(200);
     private static readonly TimeSpan PingInterval = TimeSpan.FromSeconds(30);
     private readonly string _host;
     private readonly int _port;
     private readonly TimeSpan _outputBatchDelay;
+    private readonly string _downloadRoot;
 
     internal RemoteTerminalClient(string host, int port, TimeSpan outputBatchDelay)
     {
         _host = host;
         _port = port;
         _outputBatchDelay = outputBatchDelay;
+        _downloadRoot = Path.GetFullPath(Environment.CurrentDirectory);
     }
 
     internal Task<int> CreateAsync()
@@ -81,6 +84,88 @@ internal sealed class RemoteTerminalClient
         }
 
         Console.WriteLine($"Session {sessionId:N} terminated.");
+        return 0;
+    }
+
+    internal async Task<int> UploadAsync(string localPath, string remotePath)
+    {
+        await using var source = OpenLocalSource(localPath);
+        var length = source.Length;
+        using var connection = await ConnectAsync();
+        await connection.Writer.WriteAsync(
+            MessageType.UploadFile,
+            FileTransferPayloads.EncodeUploadFile(remotePath, length));
+
+        var ready = await ReadRequiredAsync(connection.Transport);
+        if (ready.Type != MessageType.UploadReady)
+        {
+            throw new ProtocolException($"Expected UPLOAD_READY, received {ready.Type}.");
+        }
+
+        ProtocolPayloads.RequireEmpty(ready);
+        var remaining = length;
+        var buffer = new byte[FileBufferSize];
+        while (remaining > 0)
+        {
+            var bytesRead = await source.ReadAsync(
+                buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)));
+            if (bytesRead == 0)
+            {
+                throw new IOException($"Local file changed before upload completed: {localPath}");
+            }
+
+            await connection.Writer.WriteAsync(
+                MessageType.FileData,
+                buffer.AsMemory(0, bytesRead));
+            remaining -= bytesRead;
+        }
+
+        var completed = await ReadRequiredAsync(connection.Transport);
+        if (completed.Type != MessageType.FileCompleted)
+        {
+            throw new ProtocolException($"Expected FILE_COMPLETED, received {completed.Type}.");
+        }
+
+        ProtocolPayloads.RequireEmpty(completed);
+        Console.WriteLine($"Uploaded {length} bytes to {remotePath}.");
+        return 0;
+    }
+
+    internal async Task<int> DownloadAsync(string remotePath, string localPath)
+    {
+        var destinationPath = ResolveLocalDestination(localPath);
+        using var connection = await ConnectAsync();
+        await connection.Writer.WriteAsync(
+            MessageType.DownloadFile,
+            FileTransferPayloads.EncodeFilePath(remotePath));
+
+        var metadata = await ReadRequiredAsync(connection.Transport);
+        if (metadata.Type != MessageType.FileMetadata)
+        {
+            throw new ProtocolException($"Expected FILE_METADATA, received {metadata.Type}.");
+        }
+
+        var length = FileTransferPayloads.DecodeFileLength(metadata.Payload);
+        var temporaryPath = CreateLocalTemporaryPath(destinationPath);
+        var committed = false;
+        try
+        {
+            await ReceiveDownloadAsync(
+                connection.Transport,
+                temporaryPath,
+                length);
+            File.Move(temporaryPath, destinationPath, overwrite: true);
+            committed = true;
+        }
+        finally
+        {
+            if (!committed)
+            {
+                TryDelete(temporaryPath);
+            }
+        }
+
+        Console.WriteLine($"Downloaded {length} bytes to {destinationPath}.");
         return 0;
     }
 
@@ -153,6 +238,107 @@ internal sealed class RemoteTerminalClient
         }
     }
 
+    private static async Task ReceiveDownloadAsync(
+        Stream transport,
+        string temporaryPath,
+        long length)
+    {
+        await using (var destination = new FileStream(
+            temporaryPath,
+            new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                Options = FileOptions.Asynchronous | FileOptions.SequentialScan,
+            }))
+        {
+            var remaining = length;
+            while (remaining > 0)
+            {
+                var frame = await ReadRequiredAsync(transport);
+                if (frame.Type != MessageType.FileData)
+                {
+                    throw new ProtocolException(
+                        $"Expected FILE_DATA during download, received {frame.Type}.");
+                }
+
+                if (frame.Payload.Length == 0 || frame.Payload.Length > remaining)
+                {
+                    throw new ProtocolException("FILE_DATA has an invalid download length.");
+                }
+
+                await destination.WriteAsync(frame.Payload);
+                remaining -= frame.Payload.Length;
+            }
+
+            await destination.FlushAsync();
+        }
+
+        var completed = await ReadRequiredAsync(transport);
+        if (completed.Type != MessageType.FileCompleted)
+        {
+            throw new ProtocolException($"Expected FILE_COMPLETED, received {completed.Type}.");
+        }
+
+        ProtocolPayloads.RequireEmpty(completed);
+    }
+
+    private static FileStream OpenLocalSource(string path)
+    {
+        return new FileStream(
+            Path.GetFullPath(path),
+            new FileStreamOptions
+            {
+                Mode = FileMode.Open,
+                Access = FileAccess.Read,
+                Share = FileShare.Read,
+                Options = FileOptions.Asynchronous | FileOptions.SequentialScan,
+            });
+    }
+
+    private static string ResolveLocalDestination(string path)
+    {
+        var destinationPath = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(destinationPath);
+        if (string.IsNullOrEmpty(directory)
+            || string.IsNullOrEmpty(Path.GetFileName(destinationPath)))
+        {
+            throw new ArgumentException(
+                $"Local destination must identify a file: {path}",
+                nameof(path));
+        }
+
+        if (!Directory.Exists(directory))
+        {
+            throw new DirectoryNotFoundException(
+                $"Local destination directory does not exist: {directory}");
+        }
+
+        return destinationPath;
+    }
+
+    private static string CreateLocalTemporaryPath(string destinationPath)
+    {
+        var directory = Path.GetDirectoryName(destinationPath)!;
+        var fileName = Path.GetFileName(destinationPath);
+        return Path.Combine(
+            directory,
+            $".{fileName}.{Guid.NewGuid():N}.farshell-download");
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // Keep the original transfer failure.
+        }
+    }
+
     private async Task<ClientConnection> ConnectAsync()
     {
         var connection = new ClientConnection();
@@ -217,6 +403,9 @@ internal sealed class RemoteTerminalClient
         await using var outputBatcher = new TerminalOutputBatcher(
             standardOutput,
             _outputBatchDelay);
+        await using var attachedFileReceiver = new AttachedFileReceiver(
+            _downloadRoot,
+            writer);
 
         while (true)
         {
@@ -243,10 +432,18 @@ internal sealed class RemoteTerminalClient
                     var sessionExit = ProtocolPayloads.DecodeSessionExit(frame.Payload);
                     if (sessionExit.SessionId != sessionId)
                     {
-                        throw new ProtocolException("Broker reported exit for a different session.");
+                        throw new ProtocolException(
+                            "Broker reported exit for a different session.");
                     }
 
                     return sessionExit.ExitCode;
+
+                case MessageType.SessionFileStart:
+                case MessageType.FileData:
+                case MessageType.SessionFileEnd:
+                case MessageType.SessionFileAbort:
+                    await attachedFileReceiver.HandleAsync(frame, cancellationToken);
+                    break;
 
                 default:
                     throw new ProtocolException(

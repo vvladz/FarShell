@@ -8,11 +8,15 @@ internal enum ClientOperation
     List,
     Attach,
     Terminate,
+    Upload,
+    Download,
 }
 
 internal sealed record ClientOptions(
     ClientOperation Operation,
     Guid? SessionId,
+    string? LocalPath,
+    string? RemotePath,
     ClientEndpoint Endpoint,
     TimeSpan OutputBatchDelay)
 {
@@ -21,7 +25,9 @@ internal sealed record ClientOptions(
     private const string Usage =
         "Usage: [--output-batch-ms <0-100>] ([host] [port] | --list [host] [port] | "
         + "--attach <session-id> [host] [port] | "
-        + "--terminate <session-id> [host] [port]); "
+        + "--terminate <session-id> [host] [port] | "
+        + "--upload <local-path> <remote-path> [host] [port] | "
+        + "--download <remote-path> <local-path> [host] [port]); "
         + "FARSHELL_SERVER format: host[:port]; "
         + "FARSHELL_OUTPUT_BATCH_MS range: 0-100";
 
@@ -46,6 +52,8 @@ internal sealed record ClientOptions(
             return new ClientOptions(
                 ClientOperation.Create,
                 null,
+                null,
+                null,
                 ParseEndpoint(operationArgs, defaultServer),
                 outputBatchDelay);
         }
@@ -54,6 +62,8 @@ internal sealed record ClientOptions(
         {
             "--list" => new ClientOptions(
                 ClientOperation.List,
+                null,
+                null,
                 null,
                 ParseEndpoint(operationArgs[1..], defaultServer),
                 outputBatchDelay),
@@ -64,6 +74,16 @@ internal sealed record ClientOptions(
                 outputBatchDelay),
             "--terminate" => ParseSessionOperation(
                 ClientOperation.Terminate,
+                operationArgs,
+                defaultServer,
+                outputBatchDelay),
+            "--upload" => ParseFileOperation(
+                ClientOperation.Upload,
+                operationArgs,
+                defaultServer,
+                outputBatchDelay),
+            "--download" => ParseFileOperation(
+                ClientOperation.Download,
                 operationArgs,
                 defaultServer,
                 outputBatchDelay),
@@ -87,7 +107,32 @@ internal sealed record ClientOptions(
         return new ClientOptions(
             operation,
             sessionId,
+            null,
+            null,
             ParseEndpoint(args[2..], defaultServer),
+            outputBatchDelay);
+    }
+
+    private static ClientOptions ParseFileOperation(
+        ClientOperation operation,
+        string[] args,
+        string? defaultServer,
+        TimeSpan outputBatchDelay)
+    {
+        if (args.Length < 3
+            || string.IsNullOrEmpty(args[1])
+            || string.IsNullOrEmpty(args[2]))
+        {
+            throw new ArgumentException(Usage);
+        }
+
+        var isUpload = operation == ClientOperation.Upload;
+        return new ClientOptions(
+            operation,
+            null,
+            isUpload ? args[1] : args[2],
+            isUpload ? args[2] : args[1],
+            ParseEndpoint(args[3..], defaultServer),
             outputBatchDelay);
     }
 

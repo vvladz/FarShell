@@ -270,4 +270,5 @@ public static class ProtocolPayloads
 
         return BinaryPrimitives.ReadInt32LittleEndian(payload);
     }
+
 }

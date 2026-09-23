@@ -30,6 +30,33 @@ public sealed class ClientOptionsTests
     }
 
     [Fact]
+    public void ParsesUploadWithEndpoint()
+    {
+        var options = ClientOptions.Parse(
+            ["--upload", @".\local.bin", @"C:\remote.bin", "server", "9000"]);
+
+        Assert.Equal(ClientOperation.Upload, options.Operation);
+        Assert.Equal(@".\local.bin", options.LocalPath);
+        Assert.Equal(@"C:\remote.bin", options.RemotePath);
+        Assert.Equal("server", options.Endpoint.Host);
+        Assert.Equal(9000, options.Endpoint.Port);
+    }
+
+    [Fact]
+    public void ParsesDownloadWithDefaultEndpoint()
+    {
+        var options = ClientOptions.Parse(
+            ["--download", @"C:\remote.bin", @".\local.bin"],
+            "server.example:9000");
+
+        Assert.Equal(ClientOperation.Download, options.Operation);
+        Assert.Equal(@".\local.bin", options.LocalPath);
+        Assert.Equal(@"C:\remote.bin", options.RemotePath);
+        Assert.Equal("server.example", options.Endpoint.Host);
+        Assert.Equal(9000, options.Endpoint.Port);
+    }
+
+    [Fact]
     public void UsesDefaultServerFromEnvironmentValue()
     {
         var options = ClientOptions.Parse([], "server.example:9000");

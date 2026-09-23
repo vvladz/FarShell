@@ -1,3 +1,4 @@
+using System.Collections;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -40,7 +41,8 @@ public sealed class ConPtySession : IDisposable
         int columns,
         int rows,
         string commandLine = "pwsh.exe -NoLogo",
-        string? currentDirectory = null)
+        string? currentDirectory = null,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var size = ToCoord(columns, rows);
 
@@ -76,7 +78,11 @@ public sealed class ConPtySession : IDisposable
             pseudoConsoleInput.Dispose();
             pseudoConsoleOutput.Dispose();
 
-            (process, job) = StartProcess(pseudoConsole, commandLine, currentDirectory);
+            (process, job) = StartProcess(
+                pseudoConsole,
+                commandLine,
+                currentDirectory,
+                environmentVariables);
             input = new FileStream(hostInput, FileAccess.Write, bufferSize: 4096, isAsync: false);
             output = new FileStream(hostOutput, FileAccess.Read, bufferSize: 4096, isAsync: false);
 
@@ -220,7 +226,8 @@ public sealed class ConPtySession : IDisposable
     private static (SafeFileHandle Process, SafeFileHandle Job) StartProcess(
         SafePseudoConsoleHandle pseudoConsole,
         string commandLine,
-        string? currentDirectory)
+        string? currentDirectory,
+        IReadOnlyDictionary<string, string>? environmentVariables)
     {
         nuint attributeListSize = 0;
         _ = NativeMethods.InitializeProcThreadAttributeList(
@@ -237,6 +244,7 @@ public sealed class ConPtySession : IDisposable
         var job = CreateKillOnCloseJob();
         SafeFileHandle? process = null;
         var attributeList = IntPtr.Zero;
+        var environmentBlock = IntPtr.Zero;
         var attributeListInitialized = false;
         try
         {
@@ -278,6 +286,7 @@ public sealed class ConPtySession : IDisposable
             };
 
             var mutableCommandLine = new StringBuilder(commandLine);
+            environmentBlock = CreateEnvironmentBlock(environmentVariables);
             if (!NativeMethods.CreateProcessW(
                     null,
                     mutableCommandLine,
@@ -287,7 +296,7 @@ public sealed class ConPtySession : IDisposable
                     NativeMethods.ExtendedStartupInfoPresent
                         | NativeMethods.CreateUnicodeEnvironment
                         | NativeMethods.CreateSuspended,
-                    IntPtr.Zero,
+                    environmentBlock,
                     currentDirectory,
                     ref startupInfo,
                     out var processInformation))
@@ -333,7 +342,64 @@ public sealed class ConPtySession : IDisposable
             {
                 Marshal.FreeHGlobal(attributeList);
             }
+
+            if (environmentBlock != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(environmentBlock);
+            }
         }
+    }
+
+    private static IntPtr CreateEnvironmentBlock(
+        IReadOnlyDictionary<string, string>? environmentVariables)
+    {
+        if (environmentVariables is null || environmentVariables.Count == 0)
+        {
+            return IntPtr.Zero;
+        }
+
+        var environment = new SortedDictionary<string, string>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry variable in Environment.GetEnvironmentVariables())
+        {
+            if (variable.Key is string name && variable.Value is string value)
+            {
+                environment[name] = value;
+            }
+        }
+
+        foreach (var variable in environmentVariables)
+        {
+            if (string.IsNullOrEmpty(variable.Key)
+                || variable.Key.Contains('=')
+                || variable.Key.Contains('\0'))
+            {
+                throw new ArgumentException(
+                    $"Invalid environment variable name: {variable.Key}",
+                    nameof(environmentVariables));
+            }
+
+            if (variable.Value.Contains('\0'))
+            {
+                throw new ArgumentException(
+                    $"Environment variable {variable.Key} contains a null character.",
+                    nameof(environmentVariables));
+            }
+
+            environment[variable.Key] = variable.Value;
+        }
+
+        var block = new StringBuilder();
+        foreach (var variable in environment)
+        {
+            block.Append(variable.Key)
+                .Append('=')
+                .Append(variable.Value)
+                .Append('\0');
+        }
+
+        block.Append('\0');
+        return Marshal.StringToHGlobalUni(block.ToString());
     }
 
     private static SafeFileHandle CreateKillOnCloseJob()

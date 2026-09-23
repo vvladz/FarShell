@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Runtime.Versioning;
 using System.Text;
 using FarShell.Broker;
+using FarShell.Client;
 using FarShell.Protocol;
 
 namespace FarShell.Tests;
@@ -203,6 +204,117 @@ public sealed class BrokerIntegrationTests
         }
     }
 
+    [Fact(Timeout = 20_000)]
+    public async Task TransfersFilesInBothDirectionsAndKeepsInterruptedUploadsAtomic()
+    {
+        using var shutdown = new CancellationTokenSource();
+        var server = new BrokerServer(
+            new BrokerOptions(
+                Port: 0,
+                MaxConnections: 4,
+                MaxSessions: 1,
+                HandshakeTimeout: TimeSpan.FromSeconds(2)));
+        var serverTask = server.RunAsync(shutdown.Token);
+        var port = await server.ListeningPort.WaitAsync(TimeSpan.FromSeconds(5));
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            $"farshell-transfer-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            var content = new byte[200_000];
+            Random.Shared.NextBytes(content);
+            var uploadSource = Path.Combine(directory, "upload-source.bin");
+            var remoteTarget = Path.Combine(directory, "remote-target.bin");
+            var downloadTarget = Path.Combine(directory, "download-target.bin");
+            await File.WriteAllBytesAsync(uploadSource, content);
+
+            var client = new RemoteTerminalClient(
+                IPAddress.Loopback.ToString(),
+                port,
+                TimeSpan.Zero);
+            Assert.Equal(0, await client.UploadAsync(uploadSource, remoteTarget));
+            Assert.Equal(content, await File.ReadAllBytesAsync(remoteTarget));
+
+            Assert.Equal(0, await client.DownloadAsync(remoteTarget, downloadTarget));
+            Assert.Equal(content, await File.ReadAllBytesAsync(downloadTarget));
+
+            var protectedTarget = Path.Combine(directory, "protected-target.txt");
+            await File.WriteAllTextAsync(protectedTarget, "original");
+            using (var interrupted = await TestClient.ConnectAsync(port))
+            {
+                await interrupted.SendAsync(
+                    MessageType.UploadFile,
+                    FileTransferPayloads.EncodeUploadFile(protectedTarget, 100));
+                var ready = await interrupted.ReadAsync();
+                Assert.Equal(MessageType.UploadReady, ready.Type);
+                await interrupted.SendAsync(MessageType.FileData, new byte[] { 1, 2, 3 });
+            }
+
+            await WaitForConditionAsync(
+                () => !Directory.EnumerateFiles(directory, "*.farshell-upload").Any());
+            Assert.Equal("original", await File.ReadAllTextAsync(protectedTarget));
+        }
+        finally
+        {
+            shutdown.Cancel();
+            await WaitForServerStopAsync(serverTask);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact(Timeout = 20_000)]
+    public async Task SendUsesTheRemoteCurrentDirectoryAndAttachedClient()
+    {
+        using var shutdown = new CancellationTokenSource();
+        var server = new BrokerServer(
+            new BrokerOptions(
+                Port: 0,
+                MaxConnections: 4,
+                MaxSessions: 1,
+                HandshakeTimeout: TimeSpan.FromSeconds(2)));
+        var serverTask = server.RunAsync(shutdown.Token);
+        var port = await server.ListeningPort.WaitAsync(TimeSpan.FromSeconds(5));
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            $"farshell send integration {Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(directory, "results"));
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(directory, "root.txt"),
+                "root-content");
+            await File.WriteAllTextAsync(
+                Path.Combine(directory, "results", "data.bin"),
+                "binary-content");
+            using var client = await TestClient.ConnectAsync(port);
+            _ = await client.CreateAsync(new TerminalSize(100, 30));
+            var escapedDirectory = directory.Replace("'", "''", StringComparison.Ordinal);
+            await client.SendInputAsync(
+                $"Set-Location -LiteralPath '{escapedDirectory}'; "
+                + "FarShell.Broker.exe --send '*.txt' 'results\\*.bin'\r");
+
+            var files = await client.ReceiveSessionFilesAsync(2);
+
+            Assert.Equal(
+                "root-content",
+                Encoding.UTF8.GetString(files["root.txt"]));
+            Assert.Equal(
+                "binary-content",
+                Encoding.UTF8.GetString(files[@"results\data.bin"]));
+            await client.ReadOutputContainingAsync(
+                "Transferred 2 files to the attached FarShell client.");
+        }
+        finally
+        {
+            shutdown.Cancel();
+            await WaitForServerStopAsync(serverTask);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static async Task<IReadOnlyList<SessionInfo>> WaitForSessionsAsync(
         int port,
         Func<IReadOnlyList<SessionInfo>, bool> predicate)
@@ -235,6 +347,21 @@ public sealed class BrokerIntegrationTests
         }
 
         throw new TimeoutException("Detached session output was not drained.");
+    }
+
+    private static async Task WaitForConditionAsync(Func<bool> predicate)
+    {
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            if (predicate())
+            {
+                return;
+            }
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException("Expected file-transfer cleanup did not complete.");
     }
 
     private static async Task WaitForServerStopAsync(Task serverTask)
@@ -374,6 +501,63 @@ public sealed class BrokerIntegrationTests
                     return;
                 }
             }
+        }
+
+        internal async Task<IReadOnlyDictionary<string, byte[]>> ReceiveSessionFilesAsync(
+            int expectedCount)
+        {
+            var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            SessionFileStart? current = null;
+            using var content = new MemoryStream();
+            while (files.Count < expectedCount)
+            {
+                var frame = await ReadAsync();
+                switch (frame.Type)
+                {
+                    case MessageType.DataOut:
+                        break;
+
+                    case MessageType.SessionFileStart:
+                        Assert.Null(current);
+                        current = FileTransferPayloads.DecodeSessionFileStart(frame.Payload);
+                        content.SetLength(0);
+                        await SendAsync(
+                            MessageType.SessionFileStatus,
+                            FileTransferPayloads.EncodeSessionFileStatus(
+                                current.Value.TransferId,
+                                SessionFileStatusCode.Ready));
+                        break;
+
+                    case MessageType.FileData:
+                        Assert.NotNull(current);
+                        content.Write(frame.Payload);
+                        break;
+
+                    case MessageType.SessionFileEnd:
+                        Assert.NotNull(current);
+                        var transferId = ProtocolPayloads.DecodeSessionId(frame.Payload);
+                        Assert.Equal(current.Value.TransferId, transferId);
+                        Assert.Equal(current.Value.Length, content.Length);
+                        files.Add(current.Value.RelativePath, content.ToArray());
+                        await SendAsync(
+                            MessageType.SessionFileStatus,
+                            FileTransferPayloads.EncodeSessionFileStatus(
+                                transferId,
+                                SessionFileStatusCode.Completed));
+                        current = null;
+                        break;
+
+                    case MessageType.SessionFileAbort:
+                        var status = FileTransferPayloads.DecodeSessionFileStatus(frame.Payload);
+                        throw new ProtocolException(status.Message);
+
+                    case MessageType.Error:
+                        throw new ProtocolException(
+                            ProtocolPayloads.DecodeError(frame.Payload));
+                }
+            }
+
+            return files;
         }
 
         public void Dispose()

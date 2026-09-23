@@ -12,6 +12,7 @@ internal sealed class BrokerServer
     private readonly BrokerOptions _options;
     private readonly IConnectionAuthenticator _authenticator;
     private readonly SessionManager _sessions;
+    private readonly FileTransferHandler _files = new();
     private readonly ConcurrentDictionary<long, Task> _connections = new();
     private readonly TaskCompletionSource<int> _listeningPort =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -217,8 +218,20 @@ internal sealed class BrokerServer
                     connection.CancellationToken);
                 return;
 
+            case MessageType.UploadFile:
+                await _files.UploadAsync(
+                    connection,
+                    FileTransferPayloads.DecodeUploadFile(request.Payload));
+                return;
+
+            case MessageType.DownloadFile:
+                await _files.DownloadAsync(
+                    connection,
+                    FileTransferPayloads.DecodeFilePath(request.Payload));
+                return;
+
             default:
-                throw new ProtocolException($"Unsupported session operation: {request.Type}.");
+                throw new ProtocolException($"Unsupported operation: {request.Type}.");
         }
     }
 
@@ -326,6 +339,12 @@ internal sealed class BrokerServer
                     ProtocolPayloads.RequireEmpty(frame);
                     return;
 
+                case MessageType.SessionFileStatus:
+                    session.HandleFileStatus(
+                        attachment,
+                        FileTransferPayloads.DecodeSessionFileStatus(frame.Payload));
+                    break;
+
                 default:
                     throw new ProtocolException(
                         $"Unsupported message while attached: {frame.Type}.");
@@ -352,9 +371,11 @@ internal sealed class BrokerServer
 
     private static string GetClientError(Exception exception)
     {
-        return exception is ProtocolException or SessionOperationException
+        return exception is ProtocolException
+            or SessionOperationException
+            or FileTransferException
             ? exception.Message
-            : "Session operation failed.";
+            : "Operation failed.";
     }
 
     private static async Task IgnoreCompletionAsync(Task task)

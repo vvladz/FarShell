@@ -21,6 +21,12 @@ try
         {
             ClientOperation.List => await client.ListAsync(),
             ClientOperation.Terminate => await client.TerminateAsync(options.SessionId!.Value),
+            ClientOperation.Upload => await client.UploadAsync(
+                options.LocalPath!,
+                options.RemotePath!),
+            ClientOperation.Download => await client.DownloadAsync(
+                options.RemotePath!,
+                options.LocalPath!),
             _ => throw new InvalidOperationException("Unsupported non-interactive operation."),
         };
     }
