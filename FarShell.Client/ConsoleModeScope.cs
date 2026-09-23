@@ -12,9 +12,6 @@ internal sealed class ConsoleModeScope : IDisposable
     private const uint EnableProcessedInput = 0x0001;
     private const uint EnableLineInput = 0x0002;
     private const uint EnableEchoInput = 0x0004;
-    private const uint EnableWindowInput = 0x0008;
-    private const uint EnableQuickEditMode = 0x0040;
-    private const uint EnableExtendedFlags = 0x0080;
     private const uint EnableVirtualTerminalInput = 0x0200;
 
     private const uint EnableProcessedOutput = 0x0001;
@@ -74,14 +71,7 @@ internal sealed class ConsoleModeScope : IDisposable
         {
             if (hasInputConsole)
             {
-                var rawInputMode = inputMode;
-                rawInputMode &= ~(EnableProcessedInput
-                    | EnableLineInput
-                    | EnableEchoInput
-                    | EnableQuickEditMode);
-                rawInputMode |= EnableWindowInput
-                    | EnableExtendedFlags
-                    | EnableVirtualTerminalInput;
+                var rawInputMode = GetRawVirtualTerminalInputMode(inputMode);
                 SetConsoleMode(inputHandle, rawInputMode);
                 SetInputCodePage(Utf8CodePage);
             }
@@ -103,6 +93,12 @@ internal sealed class ConsoleModeScope : IDisposable
             scope.Dispose();
             throw;
         }
+    }
+
+    internal static uint GetRawVirtualTerminalInputMode(uint inputMode)
+    {
+        inputMode &= ~(EnableProcessedInput | EnableLineInput | EnableEchoInput);
+        return inputMode | EnableVirtualTerminalInput;
     }
 
     public void Dispose()

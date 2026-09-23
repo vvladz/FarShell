@@ -233,9 +233,11 @@ escape sequences therefore cross the transport unchanged.
 The client disables processed, line, and echo input, enables virtual-terminal
 input/output, and uses UTF-8 console code pages while connected. Consequently,
 `Ctrl+C` is read as terminal input (`0x03`) and sent as `DATA_IN`; it is not used
-to terminate the client. Original console modes and code pages are restored on
-exit. Terminal dimensions are checked every 200 ms and changes become
-`RESIZE` frames handled by `ResizePseudoConsole`.
+to terminate the client. Mouse and QuickEdit flags are preserved so Windows
+Terminal keeps local scrollback until a remote application enables VT mouse
+tracking. Original console modes and code pages are restored on exit. Terminal
+dimensions are checked every 200 ms and changes become `RESIZE` frames handled
+by `ResizePseudoConsole`.
 
 ## File transfer
 
