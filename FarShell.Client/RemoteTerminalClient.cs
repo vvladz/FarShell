@@ -172,6 +172,8 @@ internal sealed class RemoteTerminalClient
     private async Task<int> RunInteractiveAsync(Guid? requestedSessionId)
     {
         using var connection = await ConnectAsync();
+        using var inputPump = new ConsoleInputPump(connection.Writer);
+        await inputPump.Ready;
         var initialSize = GetTerminalSize();
         if (requestedSessionId is { } sessionId)
         {
@@ -204,13 +206,14 @@ internal sealed class RemoteTerminalClient
 
         Console.Error.WriteLine($"Session {attachedSessionId:N} attached.");
 
+        inputPump.StartForwarding();
         using var sessionCancellation = new CancellationTokenSource();
         var receiveTask = ReceiveAsync(
             connection.Transport,
             connection.Writer,
             attachedSessionId,
             sessionCancellation.Token);
-        var inputTask = PumpInputAsync(connection.Writer, sessionCancellation.Token);
+        var inputTask = inputPump.Completion;
         var resizeTask = MonitorResizeAsync(
             connection.Writer,
             initialSize,
@@ -231,6 +234,7 @@ internal sealed class RemoteTerminalClient
         finally
         {
             sessionCancellation.Cancel();
+            inputPump.Dispose();
             Observe(receiveTask);
             Observe(inputTask);
             Observe(resizeTask);
@@ -368,28 +372,6 @@ internal sealed class RemoteTerminalClient
         {
             connection.Dispose();
             throw;
-        }
-    }
-
-    private static async Task PumpInputAsync(
-        FrameWriter writer,
-        CancellationToken cancellationToken)
-    {
-        var standardInput = Console.OpenStandardInput();
-        var buffer = new byte[4096];
-
-        while (true)
-        {
-            var bytesRead = await standardInput.ReadAsync(buffer, cancellationToken);
-            if (bytesRead == 0)
-            {
-                return;
-            }
-
-            await writer.WriteAsync(
-                MessageType.DataIn,
-                buffer.AsMemory(0, bytesRead),
-                cancellationToken);
         }
     }
 

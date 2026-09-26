@@ -26,7 +26,7 @@ internal sealed class ConsoleModeScope : IDisposable
     private readonly uint _outputCodePage;
     private readonly bool _hasInputConsole;
     private readonly bool _hasOutputConsole;
-    private bool _disposed;
+    private int _disposed;
 
     private ConsoleModeScope(
         IntPtr inputHandle,
@@ -48,14 +48,23 @@ internal sealed class ConsoleModeScope : IDisposable
         _hasOutputConsole = hasOutputConsole;
     }
 
-    internal static ConsoleModeScope EnableRawVirtualTerminalMode()
+    internal static ConsoleModeScope EnableRawVirtualTerminalInputMode() =>
+        Enable(input: true, output: false);
+
+    internal static ConsoleModeScope EnableVirtualTerminalOutputMode() =>
+        Enable(input: false, output: true);
+
+    private static ConsoleModeScope Enable(bool input, bool output)
     {
         var inputHandle = NativeMethods.GetStdHandle(StandardInputHandle);
         var outputHandle = NativeMethods.GetStdHandle(StandardOutputHandle);
-        var hasInputConsole = NativeMethods.GetConsoleMode(inputHandle, out var inputMode);
-        var hasOutputConsole = NativeMethods.GetConsoleMode(outputHandle, out var outputMode);
-        var inputCodePage = NativeMethods.GetConsoleCP();
-        var outputCodePage = NativeMethods.GetConsoleOutputCP();
+        var inputMode = 0u;
+        var outputMode = 0u;
+        var hasInputConsole = input && NativeMethods.GetConsoleMode(inputHandle, out inputMode);
+        var hasOutputConsole = output && NativeMethods.GetConsoleMode(outputHandle, out outputMode);
+
+        var inputCodePage = hasInputConsole ? NativeMethods.GetConsoleCP() : 0;
+        var outputCodePage = hasOutputConsole ? NativeMethods.GetConsoleOutputCP() : 0;
 
         var scope = new ConsoleModeScope(
             inputHandle,
@@ -103,12 +112,10 @@ internal sealed class ConsoleModeScope : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
         }
-
-        _disposed = true;
 
         if (_hasInputConsole)
         {

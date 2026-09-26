@@ -31,7 +31,7 @@ try
         };
     }
 
-    using var consoleMode = ConsoleModeScope.EnableRawVirtualTerminalMode();
+    using var consoleMode = ConsoleModeScope.EnableVirtualTerminalOutputMode();
     Console.CancelKeyPress += (_, eventArgs) =>
     {
         // ENABLE_PROCESSED_INPUT is disabled in the interactive case, so Ctrl+C
