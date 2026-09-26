@@ -107,8 +107,15 @@ jobs:
         run: |
           $broker = 'artifacts/broker/FarShell.Broker.exe'
           $client = 'artifacts/client/FarShell.Client.exe'
-          if (-not (Test-Path -LiteralPath $broker -PathType Leaf)) {
-            throw 'Broker publish did not produce FarShell.Broker.exe.'
+          foreach ($file in @(
+            $broker,
+            'artifacts/broker/conpty.dll',
+            'artifacts/broker/x64/OpenConsole.exe',
+            'artifacts/broker/arm64/OpenConsole.exe'
+          )) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "Broker publish did not produce $file."
+            }
           }
           if (-not (Test-Path -LiteralPath $client -PathType Leaf)) {
             throw 'Client publish did not produce FarShell.Client.exe.'
@@ -120,7 +127,7 @@ jobs:
             throw 'Framework-dependent client executable is unexpectedly large.'
           }
 
-          Compress-Archive -LiteralPath $broker -DestinationPath artifacts/farshell-win-x64.zip
+          Compress-Archive -Path artifacts/broker/* -DestinationPath artifacts/farshell-win-x64.zip
           Compress-Archive -LiteralPath $client -DestinationPath artifacts/farshell-client-win-x64.zip
 
           foreach ($archive in @('farshell-win-x64.zip', 'farshell-client-win-x64.zip')) {
@@ -136,8 +143,15 @@ jobs:
 
           $broker = 'artifacts/verify-broker/FarShell.Broker.exe'
           $client = 'artifacts/verify-client/FarShell.Client.exe'
-          if (-not (Test-Path -LiteralPath $broker -PathType Leaf)) {
-            throw 'Broker archive does not contain FarShell.Broker.exe at its root.'
+          foreach ($file in @(
+            $broker,
+            'artifacts/verify-broker/conpty.dll',
+            'artifacts/verify-broker/x64/OpenConsole.exe',
+            'artifacts/verify-broker/arm64/OpenConsole.exe'
+          )) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "Broker archive does not contain $file."
+            }
           }
           if (-not (Test-Path -LiteralPath $client -PathType Leaf)) {
             throw 'Client archive does not contain FarShell.Client.exe at its root.'

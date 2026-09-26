@@ -9,7 +9,7 @@ Windows Terminal
     -> FarShell.Client
     -> TCP binary protocol
     -> FarShell.Broker on 0.0.0.0:8022
-    -> Windows ConPTY
+    -> bundled Microsoft ConPTY
     -> pwsh.exe
 ```
 
@@ -57,7 +57,9 @@ Every successful push to `master` creates the next patch release automatically;
 rerunning the workflow for the same commit reuses its existing tag. A pushed
 `v*` tag can also publish a release. Each release contains these assets:
 
-- `farshell-win-x64.zip` contains `FarShell.Broker.exe` at its root;
+- `farshell-win-x64.zip` contains `FarShell.Broker.exe` and `conpty.dll` at
+  its root, plus `OpenConsole.exe` in `x64` and `arm64` subdirectories. Keep
+  these files together when installing or updating the broker;
 - `farshell-client-win-x64.zip` contains `FarShell.Client.exe` at its root for
   machines initiating terminal connections;
 - a matching `.sha256` file is published for each archive.

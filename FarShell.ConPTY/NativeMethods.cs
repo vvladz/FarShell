@@ -25,7 +25,7 @@ internal static class NativeMethods
         IntPtr pipeAttributes,
         int size);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("conpty.dll", EntryPoint = "ConptyCreatePseudoConsole")]
     internal static extern int CreatePseudoConsole(
         Coord size,
         IntPtr input,
@@ -33,10 +33,10 @@ internal static class NativeMethods
         uint flags,
         out IntPtr pseudoConsole);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("conpty.dll", EntryPoint = "ConptyResizePseudoConsole")]
     internal static extern int ResizePseudoConsole(IntPtr pseudoConsole, Coord size);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("conpty.dll", EntryPoint = "ConptyClosePseudoConsole")]
     internal static extern void ClosePseudoConsole(IntPtr pseudoConsole);
 
     [DllImport("kernel32.dll", SetLastError = true)]
