@@ -1,17 +1,23 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Client", "FarShell.Client\FarShell.Client.csproj", "{17BC9A58-AA63-48B0-BF8D-F507C5DEACB0}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Client", "src\FarShell.Client\FarShell.Client.csproj", "{17BC9A58-AA63-48B0-BF8D-F507C5DEACB0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Broker", "FarShell.Broker\FarShell.Broker.csproj", "{59F4A8CB-3C8B-4962-A877-4B58F0285CC4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Broker", "src\FarShell.Broker\FarShell.Broker.csproj", "{59F4A8CB-3C8B-4962-A877-4B58F0285CC4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Protocol", "FarShell.Protocol\FarShell.Protocol.csproj", "{18AD088F-B816-4D9D-BBF3-53C21B39CAC7}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Protocol", "src\FarShell.Protocol\FarShell.Protocol.csproj", "{18AD088F-B816-4D9D-BBF3-53C21B39CAC7}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.ConPTY", "FarShell.ConPTY\FarShell.ConPTY.csproj", "{FDE964AC-9B7D-47D3-A3CA-2D0CC0B8A0E4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.ConPTY", "src\FarShell.ConPTY\FarShell.ConPTY.csproj", "{FDE964AC-9B7D-47D3-A3CA-2D0CC0B8A0E4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Tests", "FarShell.Tests\FarShell.Tests.csproj", "{10802BB9-A957-4855-84BC-05AC0824C1D3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Tests", "tests\FarShell.Tests\FarShell.Tests.csproj", "{10802BB9-A957-4855-84BC-05AC0824C1D3}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarShell.Security", "src\FarShell.Security\FarShell.Security.csproj", "{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{20A4AF39-E8EA-4AE5-9C30-C574D78B42B8}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -83,8 +89,28 @@ Global
 		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Release|x64.Build.0 = Release|Any CPU
 		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Release|x86.ActiveCfg = Release|Any CPU
 		{10802BB9-A957-4855-84BC-05AC0824C1D3}.Release|x86.Build.0 = Release|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Debug|x64.Build.0 = Debug|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Debug|x86.Build.0 = Debug|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Release|x64.ActiveCfg = Release|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Release|x64.Build.0 = Release|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Release|x86.ActiveCfg = Release|Any CPU
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{17BC9A58-AA63-48B0-BF8D-F507C5DEACB0} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{59F4A8CB-3C8B-4962-A877-4B58F0285CC4} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{18AD088F-B816-4D9D-BBF3-53C21B39CAC7} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{FDE964AC-9B7D-47D3-A3CA-2D0CC0B8A0E4} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{10802BB9-A957-4855-84BC-05AC0824C1D3} = {20A4AF39-E8EA-4AE5-9C30-C574D78B42B8}
+		{8745FEF8-D699-4CF7-A02D-3E7AE5B65857} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

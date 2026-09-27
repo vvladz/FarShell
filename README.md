@@ -1,325 +1,82 @@
 # FarShell
 
-FarShell is a minimal Windows-only proof of concept for forwarding a Windows
-Terminal session to a PowerShell process running inside a corporate
-Windows user's existing interactive session.
+FarShell provides a remote Windows terminal and file transfer over TLS. The
+broker starts shells inside its existing interactive Windows session, including
+an Entra session. Shells inherit that account's permissions; no separate Windows
+login is performed.
 
-```text
-Windows Terminal
-    -> FarShell.Client
-    -> TCP binary protocol
-    -> FarShell.Broker on 0.0.0.0:8022
-    -> bundled Microsoft ConPTY
-    -> pwsh.exe
-```
+- Concurrent, independent ConPTY shells with broker-defined launch profiles.
+- Pinned broker certificates and a shared, randomly generated API key.
+- Client registration through explicit approval on the broker machine.
+- Upload, download, and `--send` from the current remote shell directory.
+- Adaptive output batching, synchronized-output support, and a `🛜` window title.
 
-The broker does not perform a Windows login. Start it from the required
-interactive Entra desktop session. `pwsh.exe` is then created by
-`CreateProcessW` and inherits the broker's Windows security context.
+Each shell lasts for its connection. Disconnecting or stopping the broker ends
+the shell and its process tree.
 
-## Scope
+## Install
 
-This PoC contains five projects:
+Use matching broker and client packages from [Releases](https://github.com/vvladz/FarShell/releases).
+Windows 11 and Windows Terminal are recommended. The executables require the
+.NET 10 x64 runtime; the default shell requires PowerShell 7 on the broker's PATH.
+Keep all files in the broker archive together, including the bundled ConPTY files.
 
-- `FarShell.Client` — transparent local terminal forwarding and bidirectional
-  file transfer.
-- `FarShell.Broker` — concurrent connections and in-process shell sessions on
-  all IPv4 interfaces on port 8022.
-- `FarShell.Protocol` — binary framing and control payloads.
-- `FarShell.ConPTY` — the small Windows API wrapper that owns the pseudoconsole
-  and child process.
-- `FarShell.Tests` — protocol and Windows end-to-end session lifecycle tests.
+See [installation and upgrades](docs/getting-started.md) for requirements,
+archive verification, source builds, and first connection instructions.
 
-It intentionally has no SSH implementation, authentication, encryption,
-session recovery, Windows service, GUI, terminal emulator, or directory
-synchronization.
+## First connection
 
-## Requirements
-
-- Windows 10 version 1809 (build 17763) or later; Windows 11 is recommended.
-- .NET 10 x64 runtime for release binaries; the .NET 10 SDK for source builds.
-- PowerShell 7 available as `pwsh.exe` on `PATH`.
-- Windows Terminal for the intended interactive experience.
-
-## Build
-
-From the solution directory:
+On the broker machine, in the intended Windows/Entra desktop session:
 
 ```powershell
-dotnet build .\FarShell.sln
+.\FarShell.Broker.exe
 ```
 
-## Release artifacts
-
-The release workflow builds framework-dependent, single-file Windows x64
-executables. The target machine must have the .NET 10 x64 runtime installed.
-Every successful push to `master` creates the next patch release automatically;
-rerunning the workflow for the same commit reuses its existing tag. A pushed
-`v*` tag can also publish a release. Each release contains these assets:
-
-- `farshell-win-x64.zip` contains `FarShell.Broker.exe` and `conpty.dll` at
-  its root, plus `OpenConsole.exe` in `x64` and `arm64` subdirectories. Keep
-  these files together when installing or updating the broker;
-- `farshell-client-win-x64.zip` contains `FarShell.Client.exe` at its root for
-  machines initiating terminal connections;
-- a matching `.sha256` file is published for each archive.
-
-> [!IMPORTANT]
-> The broker listens on all IPv4 interfaces and has no authentication or
-> encryption. A client connection can create a shell with the broker's Windows
-> identity.
-> Restrict inbound TCP port 8022 to trusted clients.
-
-## Run the local PoC
-
-Use two Windows Terminal tabs on the same Windows machine first.
-
-In the interactive Windows/Entra session that must own all shell processes:
+On the client machine:
 
 ```powershell
-dotnet run --project .\FarShell.Broker
+.\FarShell.Client.exe --pair 192.168.1.110
 ```
 
-The broker prints its wildcard listening endpoint. In the second tab:
+Compare the displayed certificate fingerprint with the broker's output before
+approving it. The client then displays a one-time request ID. In another terminal
+on the broker machine, under the same Windows user:
 
 ```powershell
-dotnet run --project .\FarShell.Client
+.\FarShell.Broker.exe --approve <request-id>
 ```
 
-The client defaults to `127.0.0.1:8022`. Set `FARSHELL_SERVER` to `host[:port]`
-to change the default endpoint for every client operation:
+After approval, connect normally:
 
 ```powershell
 $env:FARSHELL_SERVER = '192.168.1.110:8022'
-dotnet run --project .\FarShell.Client
+.\FarShell.Client.exe
+.\FarShell.Client.exe --profile work
 ```
 
-An endpoint supplied explicitly on the command line overrides
-`FARSHELL_SERVER`:
+`--profile work` requires a configured `work` profile. Every paired client has
+the broker account's shell and file access. Read [security and trust](docs/security.md)
+before allowing remote access. The broker listens on all IPv4 interfaces; restrict
+the firewall rule to the machines that should reach it.
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [CLI reference](docs/cli.md)
+- [Profile configuration](docs/configuration.md)
+- [File transfers](docs/file-transfer.md)
+- [Security, pairing, and rotation](docs/security.md)
+- [Architecture](docs/architecture.md) and [protocol](docs/protocol.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Development and release validation](docs/development.md)
+
+Both executables support `--help` and `--version`.
+
+## Build
+
+From the repository root with the .NET 10 SDK:
 
 ```powershell
-dotnet run --project .\FarShell.Client -- 127.0.0.1 8022
+dotnet build .\FarShell.sln -c Release
+dotnet test .\FarShell.sln -c Release --no-build
 ```
-
-The client coalesces adjacent terminal output for up to 4 ms before rendering
-it. This reduces visible intermediate cursor positions during rapid VT screen
-redraws without changing the terminal byte stream. Set
-`FARSHELL_OUTPUT_BATCH_MS` to change the default for the client, or use
-`--output-batch-ms`; the command-line value takes precedence:
-
-```powershell
-$env:FARSHELL_OUTPUT_BATCH_MS = '8'
-dotnet run --project .\FarShell.Client -- --output-batch-ms 2 127.0.0.1 8022
-```
-
-Valid values are 0 through 100 milliseconds. Use `0` to disable batching and
-restore immediate rendering of every `DATA_OUT` payload.
-
-The default command creates a new shell. Multiple clients can run independent
-shells concurrently. Closing a client ends its shell and process tree; shells
-cannot be detached or resumed.
-
-Upload a local file to an exact path on the broker machine, or download a
-broker-side file to an exact local path:
-
-```powershell
-dotnet run --project .\FarShell.Client -- --upload `
-  .\package.zip 'C:\Temp\package.zip' 127.0.0.1 8022
-dotnet run --project .\FarShell.Client -- --download `
-  'C:\Temp\result.log' .\result.log 127.0.0.1 8022
-```
-
-Paths may be relative; a relative local path is resolved from the client
-working directory, while a relative remote path is resolved from the broker
-working directory. The destination directory must already exist. A completed
-transfer replaces an existing destination file. Data is streamed in bounded
-chunks, and an interrupted transfer leaves an existing destination unchanged.
-
-For the common interactive remote-to-local case, start the client from the
-local destination directory, change to the source directory in the remote
-session, and run the broker's `--send` command there:
-
-```powershell
-# The client was started from C:\Local\Destination.
-Set-Location C:\Remote\Source
-FarShell.Broker.exe --send report.zip
-FarShell.Broker.exe --send *.log
-FarShell.Broker.exe --send .\results\*.json
-```
-
-`--send` resolves paths against its own current directory and writes them below
-the directory from which the attached client was started. Relative
-subdirectories are preserved and created locally when needed. Existing files
-are replaced only after their complete contents have arrived.
-
-Every session process inherits the randomized current-user-only control pipe
-name and a `PATH` containing the broker directory. No PowerShell function,
-profile change, or shell-specific bootstrap is used: a shell or application can
-invoke `FarShell.Broker.exe --send` directly. Both broker and client must
-include this support; update them together before using the command.
-
-`--send` accepts literal file names and `*`/`?` wildcards in the final path
-segment. Paths must be relative, may not contain `..`, and may not name a
-directory. One invocation may transfer at most 256 files. An attached client is
-required; completed files from an earlier part of a multi-file invocation
-remain in place if a later file fails.
-
-Broker resource limits and the handshake timeout are configurable:
-
-```powershell
-dotnet run --project .\FarShell.Broker -- 8022 `
-  --max-connections 32 --max-sessions 16 --handshake-timeout-seconds 10
-```
-
-For direct executable use after building:
-
-```powershell
-.\FarShell.Client\bin\Debug\net10.0-windows\FarShell.Client.exe 127.0.0.1 8022
-```
-
-Verify the local ConPTY round trip first. The broker also accepts direct remote
-connections, but the protocol is neither authenticated nor encrypted. Limit
-the Windows Firewall rule to trusted source addresses and do not expose the
-broker to an untrusted network.
-
-## Protocol
-
-Every frame is:
-
-```text
-1 byte   message type
-4 bytes  payload length as a little-endian signed Int32
-N bytes  payload
-```
-
-The maximum payload is 16 MiB. Every connection starts with `HELLO` and
-`HELLO_ACK` carrying protocol version `2` before it may perform an operation.
-Client and broker binaries must be updated together when moving from version 1.
-
-| Value | Message | Direction | Payload |
-|---:|---|---|---|
-| 1 | `DATA_IN` | client -> broker | raw terminal bytes |
-| 2 | `DATA_OUT` | broker -> client | raw terminal bytes |
-| 3 | `RESIZE` | client -> broker | columns and rows as two little-endian Int32 values |
-| 4 | `PING` | either | empty |
-| 5 | `PONG` | either | empty |
-| 16 | `HELLO` | client -> broker | little-endian Int32 protocol version |
-| 17 | `HELLO_ACK` | broker -> client | selected protocol version |
-| 20–21 | `CREATE_SESSION` / `SESSION_CREATED` | request / response | terminal size / session ID |
-| 27 | `SESSION_EXITED` | broker -> client | session ID and little-endian Int32 exit code |
-| 28 | `ERROR` | broker -> client | UTF-8 error text |
-| 29 | `UPLOAD_FILE` | client -> broker | little-endian Int64 length and UTF-8 destination path |
-| 30 | `UPLOAD_READY` | broker -> client | empty |
-| 31 | `DOWNLOAD_FILE` | client -> broker | UTF-8 source path |
-| 32 | `FILE_METADATA` | broker -> client | little-endian Int64 length |
-| 33 | `FILE_DATA` | either | raw file chunk |
-| 34 | `FILE_COMPLETED` | broker -> client | empty |
-| 35 | `SESSION_FILE_START` | broker -> attached client | transfer ID, length, and relative path |
-| 36 | `SESSION_FILE_STATUS` | attached client -> broker | transfer ID, state, and optional error |
-| 37 | `SESSION_FILE_END` | broker -> attached client | transfer ID |
-| 38 | `SESSION_FILE_ABORT` | broker -> attached client | failed transfer status |
-| 39 | `SEND_FILES_REQUEST` | session command -> broker pipe | remote root and path patterns |
-| 40 | `SEND_FILES_COMPLETED` | broker pipe -> session command | transferred file count |
-
-Terminal data is never converted to strings. Partial UTF-8 sequences and VT
-escape sequences therefore cross the transport unchanged.
-
-The reasons for the bundled ConPTY, console input pump, and startup screen
-initialization are recorded in
-[Terminal compatibility notes](docs/terminal-compatibility.md).
-
-The client disables processed, line, and echo input, enables virtual-terminal
-input/output, and uses UTF-8 console code pages while connected. Consequently,
-`Ctrl+C` is read as terminal input (`0x03`) and sent as `DATA_IN`; it is not used
-to terminate the client. Mouse and QuickEdit flags are preserved so Windows
-Terminal keeps local scrollback until a remote application enables VT mouse
-tracking. Original console modes and code pages are restored on exit. Terminal
-dimensions are checked every 200 ms and changes become `RESIZE` frames handled
-by `ResizePseudoConsole`.
-
-## File transfer
-
-`--upload` and `--download` each use one separate protocol connection and do
-not require or modify a shell session. File contents remain raw bytes and can
-be larger than the 16 MiB per-frame limit because they are split across
-`FILE_DATA` frames. Destination writes use a temporary file in the destination
-directory and replace the requested file only after the complete declared
-length has been received.
-
-Transfers do not preserve timestamps, attributes, ACLs, alternate data streams,
-or sparse-file layout. Resume, compression, directory recursion, globbing, and
-progress reporting are not implemented by the standalone commands. `--send`
-adds non-recursive file-name globbing for an attached interactive session.
-
-## Session lifecycle
-
-1. The client negotiates protocol version 2 and requests a new shell.
-2. The broker creates one ConPTY at the client's terminal size and starts
-   `pwsh.exe -NoLogo`.
-3. Initial ConPTY output stays in its pipe until the broker sends
-   `SESSION_CREATED`. The client clears and homes its terminal once, then the
-   broker forwards all output in order.
-4. Client input and ConPTY output are proxied as raw bytes. Resize messages
-   update the ConPTY dimensions.
-5. Client disconnect, normal shell exit, or broker shutdown ends the session.
-   Disconnect and shutdown close its Windows Job Object and process tree.
-
-## Acceptance checklist
-
-Run these first and confirm they match a normal PowerShell started locally in
-the same corporate interactive desktop session:
-
-- [ ] `whoami`
-- [ ] `$env:USERPROFILE`
-- [ ] `git status`
-
-Then run `codex` and verify:
-
-- [ ] normal typing, Enter, and Backspace
-- [ ] arrows, Home, and End
-- [ ] `Ctrl+C` reaches the remote program and does not terminate the client
-- [ ] `Ctrl+L`, other Ctrl combinations, and Alt combinations
-- [ ] large paste
-- [ ] terminal resize and TUI redraw
-- [ ] scrolling and alternate screen
-- [ ] Unicode and colors/truecolor
-- [ ] clean exit from Codex and successful repeated launch
-
-Finally run Copilot CLI and repeat the interactive checks. The acceptance
-criterion is that remote Codex/Copilot behavior is materially equivalent to
-running each tool locally in Windows Terminal on the corporate laptop.
-
-Then verify the session lifecycle:
-
-- [ ] two clients can use independent shells concurrently
-- [ ] initial shell prompt and terminal control sequences appear correctly
-- [ ] closing a client ends its shell and complete process tree
-- [ ] a disconnected shell releases its session slot for a new client
-- [ ] broker shutdown removes every remaining session and process tree
-- [ ] `FarShell.Broker.exe --send` resolves from the remote current directory
-  and saves below the client's startup directory
-- [ ] interrupted `--send` leaves an existing local file unchanged
-
-## Known PoC boundaries
-
-- A shell exists only while its client connection and broker process remain
-  alive. Multiple independent shells and connections may run concurrently.
-- Shells cannot be resumed after a connection is lost.
-- The same anonymous, unencrypted connection can read and replace any file
-  accessible to the broker's Windows identity.
-- `--send` accepts relative destinations below the attached client's startup
-  directory. The current path check does not account for Windows junctions or
-  other reparse points; see [issue #6](https://github.com/vvladz/FarShell/issues/6).
-- `PING`/`PONG` only proves the stream is responsive.
-- Broker startup must remain in the intended interactive user session. Running
-  it as `LocalSystem` or another account changes the execution identity and
-  defeats the design.
-
-The implemented multi-session lifecycle and future authentication boundaries
-are documented in
-[`SESSION_ARCHITECTURE.md`](SESSION_ARCHITECTURE.md).
-
-Future work is tracked in [GitHub Issues](https://github.com/vvladz/FarShell/issues),
-including [TLS and API-key authentication](https://github.com/vvladz/FarShell/issues/4)
-and [broker-defined launch profiles](https://github.com/vvladz/FarShell/issues/5).
-Neither is implemented yet.

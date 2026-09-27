@@ -52,11 +52,17 @@ jobs:
                 Select-Object -First 1)
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+              [xml]$buildProperties = Get-Content Directory.Build.props -Raw
+              [version]$minimumVersion = $buildProperties.Project.PropertyGroup.VersionPrefix
               if ($latestTags.Count -eq 0) {
-                $tag = 'v0.1.0'
+                $tag = "v$minimumVersion"
               } else {
                 [version]$latest = $latestTags[0].Substring(1)
-                $tag = "v$($latest.Major).$($latest.Minor).$($latest.Build + 1)"
+                $tag = if ($latest -lt $minimumVersion) {
+                  "v$minimumVersion"
+                } else {
+                  "v$($latest.Major).$($latest.Minor).$($latest.Build + 1)"
+                }
               }
             }
 
@@ -92,12 +98,12 @@ jobs:
             "-p:Version=$env:RELEASE_VERSION"
           )
 
-          dotnet publish FarShell.Broker/FarShell.Broker.csproj `
+          dotnet publish src/FarShell.Broker/FarShell.Broker.csproj `
             -c Release -r win-x64 --no-self-contained --no-restore `
             @properties -o artifacts/broker
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          dotnet publish FarShell.Client/FarShell.Client.csproj `
+          dotnet publish src/FarShell.Client/FarShell.Client.csproj `
             -c Release -r win-x64 --no-self-contained --no-restore `
             @properties -o artifacts/client
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -105,6 +111,10 @@ jobs:
       - name: Package release assets
         shell: pwsh
         run: |
+          foreach ($directory in @('artifacts/broker', 'artifacts/client')) {
+            Copy-Item -LiteralPath README.md -Destination $directory
+            Copy-Item -LiteralPath docs -Destination $directory -Recurse
+          }
           $broker = 'artifacts/broker/FarShell.Broker.exe'
           $client = 'artifacts/client/FarShell.Client.exe'
           foreach ($file in @(
@@ -128,7 +138,7 @@ jobs:
           }
 
           Compress-Archive -Path artifacts/broker/* -DestinationPath artifacts/farshell-win-x64.zip
-          Compress-Archive -LiteralPath $client -DestinationPath artifacts/farshell-client-win-x64.zip
+          Compress-Archive -Path artifacts/client/* -DestinationPath artifacts/farshell-client-win-x64.zip
 
           foreach ($archive in @('farshell-win-x64.zip', 'farshell-client-win-x64.zip')) {
             $hash = (Get-FileHash "artifacts/$archive" -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -158,13 +168,20 @@ jobs:
           }
 
           $brokerCheck = Start-Process -FilePath $broker -ArgumentList '0' -Wait -PassThru -WindowStyle Hidden
-          if ($brokerCheck.ExitCode -ne 1) {
-            throw "Broker package startup check returned $($brokerCheck.ExitCode); expected 1 for invalid arguments."
+          if ($brokerCheck.ExitCode -ne 2) {
+            throw "Broker package startup check returned $($brokerCheck.ExitCode); expected 2 for invalid arguments."
           }
 
           $clientCheck = Start-Process -FilePath $client -ArgumentList '127.0.0.1', '0' -Wait -PassThru -WindowStyle Hidden
-          if ($clientCheck.ExitCode -ne 1) {
-            throw "Client package startup check returned $($clientCheck.ExitCode); expected 1 for invalid arguments."
+          if ($clientCheck.ExitCode -ne 2) {
+            throw "Client package startup check returned $($clientCheck.ExitCode); expected 2 for invalid arguments."
+          }
+
+          foreach ($executable in @($broker, $client)) {
+            & $executable --help
+            if ($LASTEXITCODE -ne 0) { throw 'Published help failed.' }
+            & $executable --version
+            if ($LASTEXITCODE -ne 0) { throw 'Published version failed.' }
           }
 
       - uses: actions/upload-artifact@v7

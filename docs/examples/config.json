@@ -1,0 +1,13 @@
+{
+  "defaultProfile": "home",
+  "profiles": {
+    "home": {
+      "workingDirectory": "%USERPROFILE%",
+      "shell": {
+        "file": "pwsh.exe",
+        "args": ["-NoLogo"]
+      },
+      "env": {}
+    }
+  }
+}
