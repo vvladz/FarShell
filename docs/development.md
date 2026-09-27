@@ -25,9 +25,13 @@ published `--help` and `--version` work and invalid arguments return 2.
 
 ## Releases
 
-A push to `master` publishes the next patch release after the build and tests
-pass. An existing version tag on the commit is reused. Pushing a `v*` tag also
-publishes a release with that version.
+CI versions use `1.0.<GitHub Actions run number>` for both build and publish.
+A successful push to `master` publishes the corresponding `v1.0.<run number>`
+release. Rerunning the same workflow run reuses that version and release tag.
+Pull requests and manual runs validate and upload artifacts without publishing
+a release, so published version numbers can have gaps. Pushing a tag does not
+start the workflow. Local builds default to `1.0.0` from `Directory.Build.props`;
+use `-p:Version=1.0.123` to test a particular version locally.
 
 ## Manual terminal checks
 
