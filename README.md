@@ -224,6 +224,10 @@ Client and broker binaries must be updated together when moving from version 1.
 Terminal data is never converted to strings. Partial UTF-8 sequences and VT
 escape sequences therefore cross the transport unchanged.
 
+The reasons for the bundled ConPTY, console input pump, and startup screen
+initialization are recorded in
+[Terminal compatibility notes](docs/terminal-compatibility.md).
+
 The client disables processed, line, and echo input, enables virtual-terminal
 input/output, and uses UTF-8 console code pages while connected. Consequently,
 `Ctrl+C` is read as terminal input (`0x03`) and sent as `DATA_IN`; it is not used
