@@ -10,19 +10,18 @@ internal sealed class ShellSession : IAsyncDisposable
     private readonly object _stateLock = new();
     private readonly ConPtySession _conPty;
     private readonly SessionFileSendService _fileSender;
+    private readonly TaskCompletionSource _activated =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task<int> _completion;
     private SessionAttachment? _attachment;
-    private TerminalSize _size;
     private bool _terminating;
     private bool _exited;
     private bool _disposed;
 
-    internal ShellSession(Guid id, string ownerId, TerminalSize size)
+    internal ShellSession(Guid id, TerminalSize size)
     {
         Id = id;
-        OwnerId = ownerId;
-        CreatedAt = DateTimeOffset.UtcNow;
-        _size = size.Validate();
+        size.Validate();
         _fileSender = new SessionFileSendService(id, GetActiveAttachment);
         _conPty = ConPtySession.Start(
             size.Columns,
@@ -34,19 +33,7 @@ internal sealed class ShellSession : IAsyncDisposable
 
     internal Guid Id { get; }
 
-    internal string OwnerId { get; }
-
-    internal DateTimeOffset CreatedAt { get; }
-
     internal Task<int> Completion => _completion;
-
-    internal SessionInfo GetInfo()
-    {
-        lock (_stateLock)
-        {
-            return new SessionInfo(Id, _attachment is not null, CreatedAt, _size);
-        }
-    }
 
     internal SessionAttachment ReserveAttachment(ConnectionContext connection)
     {
@@ -67,25 +54,17 @@ internal sealed class ShellSession : IAsyncDisposable
         }
     }
 
-    internal void Activate(SessionAttachment attachment, TerminalSize size)
+    internal void Activate(SessionAttachment attachment)
     {
-        size.Validate();
         lock (_stateLock)
         {
             RequireCurrentAttachment(attachment);
-            _size = size;
             attachment.IsActive = true;
         }
 
-        try
-        {
-            _conPty.Resize(size.Columns, size.Rows);
-        }
-        catch
-        {
-            Detach(attachment);
-            throw;
-        }
+        // ConPTY already has the requested size. Keep its startup output in the
+        // pipe until the client can receive it, then drain it in order.
+        _activated.TrySetResult();
     }
 
     internal async ValueTask WriteInputAsync(
@@ -108,7 +87,6 @@ internal sealed class ShellSession : IAsyncDisposable
         lock (_stateLock)
         {
             RequireActiveAttachment(attachment);
-            _size = size;
         }
 
         _conPty.Resize(size.Columns, size.Rows);
@@ -126,7 +104,7 @@ internal sealed class ShellSession : IAsyncDisposable
         _fileSender.HandleStatus(attachment, status);
     }
 
-    internal void Detach(SessionAttachment attachment)
+    internal void ReleaseAttachment(SessionAttachment attachment)
     {
         var removed = false;
         lock (_stateLock)
@@ -156,6 +134,7 @@ internal sealed class ShellSession : IAsyncDisposable
             _terminating = true;
         }
 
+        _activated.TrySetResult();
         _conPty.Terminate();
     }
 
@@ -192,6 +171,7 @@ internal sealed class ShellSession : IAsyncDisposable
 
         try
         {
+            await _activated.Task;
             while (true)
             {
                 int bytesRead;
@@ -231,7 +211,7 @@ internal sealed class ShellSession : IAsyncDisposable
                 }
                 catch (Exception exception) when (IsConnectionFailure(exception))
                 {
-                    Detach(attachment);
+                    attachment.Connection.Cancel();
                 }
             }
 
@@ -268,7 +248,8 @@ internal sealed class ShellSession : IAsyncDisposable
         }
         catch (Exception exception) when (IsConnectionFailure(exception))
         {
-            Detach(attachment);
+            attachment.Connection.Cancel();
+            Terminate();
         }
     }
 

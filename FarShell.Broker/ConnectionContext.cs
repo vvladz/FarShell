@@ -28,8 +28,6 @@ internal sealed class ConnectionContext : IDisposable
 
     internal int ProtocolVersion { get; set; }
 
-    internal ConnectionIdentity Identity { get; set; }
-
     internal void Cancel()
     {
         _lifetime.Cancel();

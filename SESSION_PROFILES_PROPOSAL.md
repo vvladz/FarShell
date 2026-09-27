@@ -5,10 +5,9 @@
 This document records the proposed session-profile configuration for FarShell.
 It is an implementation plan, not the current behavior.
 
-The proposal does not change the existing session lifecycle: a runtime session
-still has an opaque GUID, survives client disconnects while the broker remains
-running, accepts at most one attachment, and ends on shell exit, explicit
-termination, or broker shutdown.
+The proposal does not change the existing shell lifecycle: each shell belongs
+to one live client connection and ends on disconnect, normal exit, or broker
+shutdown. Multiple clients can run independent shells concurrently.
 
 ## Goal
 
@@ -29,9 +28,8 @@ A **profile** is an immutable broker-side launch template such as `home` or
 `work`. A **session** is one running ConPTY and process tree created from a
 profile.
 
-Several sessions may use the same profile. Their runtime identity remains the
-session GUID; profile names are not aliases for attach or terminate operations.
-Human-readable runtime session names are outside the scope of this proposal.
+Several concurrent shells may use the same profile. Internal session GUIDs
+remain protocol correlation IDs, not names or handles for reconnecting.
 
 The term `workingDirectory` is used instead of `home` because the setting
 controls the process current directory only. A profile that must also set the
@@ -169,8 +167,8 @@ preserved unless the profile explicitly changes or removes them.
 
 ## Client behavior
 
-The existing command with no operation continues to create and attach to a new
-session using the broker's default profile:
+The existing command with no operation continues to create a new shell using
+the broker's default profile:
 
 ```text
 FarShell.Client.exe [host] [port]
@@ -182,19 +180,15 @@ A client selects a named profile explicitly with:
 FarShell.Client.exe --profile <profile> [host] [port]
 ```
 
-`--attach` does not accept a profile override. A session's resolved profile is
-fixed when the session is created.
-
-`--list` adds a `PROFILE` column containing the resolved profile name. Attach
-and terminate continue to use session GUIDs. A separate list-profiles operation
+There is no attach or shell-listing command. A separate list-profiles operation
 is not required initially; configuration distribution and profile discovery
 remain operational concerns outside the terminal protocol.
 
 ## Broker model and boundaries
 
 The broker loads and validates configuration into an immutable profile
-registry. Profile lookup happens after protocol negotiation and identity
-resolution, but before reserving a session slot or creating a ConPTY.
+registry. Profile lookup happens after protocol negotiation and authentication,
+but before reserving a session slot or creating a ConPTY.
 
 ```text
 Requested profile name or empty default selection
@@ -210,10 +204,9 @@ An unknown profile is rejected without creating a ConPTY, registering a
 session, or consuming a session slot. Error messages may contain the requested
 profile name but must not include environment values or other profile details.
 
-`ShellSession` stores the resolved profile name for session metadata and passes
-the immutable launch settings to the ConPTY layer. `SessionManager` remains
-responsible for lifecycle, ownership, registry limits, and cleanup; it does not
-parse JSON or resolve paths.
+`ShellSession` passes the immutable launch settings to the ConPTY layer.
+`SessionManager` remains responsible for active-shell limits and cleanup; it
+does not parse JSON or resolve paths.
 
 The ConPTY project receives generic process-launch settings. It must not depend
 on broker configuration types or know about profile names.
@@ -221,45 +214,34 @@ on broker configuration types or know about profile names.
 ## Protocol boundary
 
 The create-session payload currently contains only terminal dimensions. Adding
-a profile selection and reporting the resolved profile in session metadata is
-a protocol-breaking change, so this proposal requires protocol version 2.
+a profile selection is a protocol-breaking change, so this proposal requires
+protocol version 3.
 
-Version 2 adds:
-
-- `CreateSessionRequest`, containing terminal size and an optional profile
-  name;
-- the resolved profile name to each `SessionInfo` item.
+Version 3 adds `CreateSessionRequest`, containing terminal size and an optional
+profile name.
 
 An empty profile name in `CreateSessionRequest` means "use the broker default."
-The broker stores and reports the resolved name, never an empty value.
 
 Profile text is strict UTF-8 with explicit length prefixes and the same
 1-to-64-character validation used by the broker registry. Malformed lengths,
 invalid UTF-8, and invalid names are protocol errors. The overall frame limit
 remains unchanged.
 
-Version 1 clients and version 2 brokers reject each other through the existing
+Version 2 clients and version 3 brokers reject each other through the existing
 version negotiation. Broker and client must therefore be deployed together,
 consistent with the existing protocol upgrade policy.
 
 ## Relationship to identity and authorization
 
-Profiles are independent of the proposed identity mechanism in
-`AUTH_PROPOSAL.md`. Identity resolution still produces a broker-owned
-`ConnectionIdentity`; profile resolution only decides how an authorized create
-operation starts its process.
-
-The initial implementation gives every accepted identity access to every
-configured profile. A future authorizer may restrict profiles by owner without
-changing the JSON launch schema or the ConPTY layer, but such policy is outside
-this proposal.
+Profiles are independent of the proposed single API key and TLS mechanism in
+`AUTH_PROPOSAL.md`. Every authenticated client can select any configured
+profile. Profile resolution only decides how a create operation starts its
+process.
 
 > [!WARNING]
 > Do not place secrets in profile environment values. The current transport is
-> unauthenticated and unencrypted, and the proposed plaintext identity
-> mechanism is not sufficient protection for secrets exposed to an interactive
-> shell. Secret injection requires a separate secure transport and
-> authentication design.
+> unauthenticated and unencrypted. Secret injection requires secure transport,
+> authentication, and a separate design for protecting those values locally.
 
 ## Validation and error handling
 
@@ -286,7 +268,7 @@ environment or values from it.
 ## Compatibility and rollout
 
 The no-file built-in profile preserves current shell, directory, environment,
-session-limit, detach, attach, resize, exit, and shutdown behavior.
+session-limit, disconnect, resize, exit, and shutdown behavior.
 
 The protocol version bump is intentionally breaking. Release artifacts must
 publish broker and client binaries from the same commit, and upgrade guidance
@@ -301,18 +283,17 @@ configuration exists.
 2. Add generic ConPTY process-launch settings, Windows argument quoting, and a
    Unicode environment block with tests for inheritance, override, removal,
    quoting, and cleanup on failure.
-3. Define protocol version 2 create and session-list payloads with round-trip
-   and malformed-payload tests.
+3. Define the protocol version 3 create payload with round-trip and
+   malformed-payload tests.
 4. Resolve profiles in the broker before session-slot acquisition, pass launch
-   settings through `SessionManager` and `ShellSession`, and expose the resolved
-   profile in `SessionInfo`.
-5. Add `--profile`, update `--list`, and extend integration tests to cover the
-   default profile and a selected profile.
+   settings through `SessionManager` and `ShellSession`.
+5. Add `--profile` and extend integration tests to cover the default profile
+   and a selected profile.
 6. Update `README.md` with the configuration location, schema, CLI examples,
    restart requirement, security warning, and coordinated upgrade requirement.
 7. Run the Release build and the complete test suite, then manually verify a
-   configured working directory, environment override, detach/reattach, normal
-   shell exit, and broker shutdown cleanup.
+   configured working directory, environment override, disconnect, normal shell
+   exit, and broker shutdown cleanup.
 
 ## Acceptance criteria
 
@@ -331,11 +312,8 @@ configuration exists.
 - The shell receives inherited variables plus configured overrides and does
   not receive explicitly removed variables.
 - Shell paths and arguments containing spaces and quotes are passed correctly.
-- `--list` reports the resolved profile name for attached and detached
-  sessions.
-- Detach, reattach, resize, normal exit, explicit terminate, session limits,
-  and broker shutdown retain their existing behavior.
-- A profile cannot be changed when attaching to an existing session.
-- Version 1 and version 2 peers fail explicitly during negotiation rather than
+- Disconnect, resize, normal exit, session limits, and broker shutdown retain
+  their existing behavior.
+- Version 2 and version 3 peers fail explicitly during negotiation rather than
   misinterpreting payloads.
 - Broker and client logs never print profile environment values.

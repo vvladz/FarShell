@@ -19,18 +19,17 @@ internal sealed class BrokerServer
     private long _nextConnectionId;
 
     internal BrokerServer(BrokerOptions options)
-        : this(options, new AnonymousConnectionAuthenticator(), new OwnerSessionAuthorizer())
+        : this(options, new AnonymousConnectionAuthenticator())
     {
     }
 
     internal BrokerServer(
         BrokerOptions options,
-        IConnectionAuthenticator authenticator,
-        ISessionAuthorizer authorizer)
+        IConnectionAuthenticator authenticator)
     {
         _options = options;
         _authenticator = authenticator;
-        _sessions = new SessionManager(options.MaxSessions, authorizer);
+        _sessions = new SessionManager(options.MaxSessions);
     }
 
     internal Task<int> ListeningPort => _listeningPort.Task;
@@ -121,14 +120,14 @@ internal sealed class BrokerServer
         try
         {
             await NegotiateAsync(connection);
-            connection.Identity = await _authenticator.AuthenticateAsync(
+            await _authenticator.AuthenticateAsync(
                 connection,
                 connection.CancellationToken);
             await DispatchAsync(connection);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (connection.CancellationToken.IsCancellationRequested)
         {
-            // Broker shutdown cancels all active connections.
+            // Shutdown or a failed transport cancels the connection.
         }
         catch (Exception exception)
         {
@@ -190,32 +189,10 @@ internal sealed class BrokerServer
 
         switch (request.Type)
         {
-            case MessageType.ListSessions:
-                ProtocolPayloads.RequireEmpty(request);
-                await connection.Writer.WriteAsync(
-                    MessageType.SessionList,
-                    ProtocolPayloads.EncodeSessionList(_sessions.List(connection.Identity)),
-                    connection.CancellationToken);
-                return;
-
             case MessageType.CreateSession:
-                await CreateAndAttachAsync(
+                await CreateSessionAsync(
                     connection,
                     ProtocolPayloads.DecodeResize(request.Payload));
-                return;
-
-            case MessageType.AttachSession:
-                var attachRequest = ProtocolPayloads.DecodeAttachSession(request.Payload);
-                await AttachAsync(connection, attachRequest.SessionId, attachRequest.Size);
-                return;
-
-            case MessageType.TerminateSession:
-                var sessionId = ProtocolPayloads.DecodeSessionId(request.Payload);
-                await _sessions.TerminateAsync(connection.Identity, sessionId);
-                await connection.Writer.WriteAsync(
-                    MessageType.SessionTerminated,
-                    ProtocolPayloads.EncodeSessionId(sessionId),
-                    connection.CancellationToken);
                 return;
 
             case MessageType.UploadFile:
@@ -235,57 +212,48 @@ internal sealed class BrokerServer
         }
     }
 
-    private async Task CreateAndAttachAsync(
+    private async Task CreateSessionAsync(
         ConnectionContext connection,
         TerminalSize size)
     {
-        var session = _sessions.Create(connection.Identity, size);
-        await RunAttachedAsync(connection, session, size, MessageType.SessionCreated);
+        var session = _sessions.Create(size);
+        await RunSessionAsync(connection, session);
     }
 
-    private async Task AttachAsync(
+    private static async Task RunSessionAsync(
         ConnectionContext connection,
-        Guid sessionId,
-        TerminalSize size)
-    {
-        var session = _sessions.Get(connection.Identity, sessionId);
-        await RunAttachedAsync(connection, session, size, MessageType.SessionAttached);
-    }
-
-    private static async Task RunAttachedAsync(
-        ConnectionContext connection,
-        ShellSession session,
-        TerminalSize size,
-        MessageType responseType)
+        ShellSession session)
     {
         var attachment = session.ReserveAttachment(connection);
         try
         {
             await connection.Writer.WriteAsync(
-                responseType,
+                MessageType.SessionCreated,
                 ProtocolPayloads.EncodeSessionId(session.Id),
                 connection.CancellationToken);
-            session.Activate(attachment, size);
+            session.Activate(attachment);
             try
             {
-                await PumpAttachedConnectionAsync(connection, session, attachment);
+                await PumpSessionAsync(connection, session, attachment);
             }
             catch (IOException exception) when (exception is not ProtocolException)
             {
-                // A broken transport detaches the client without ending the session.
+                // A broken transport ends the session below.
             }
             catch (SocketException)
             {
-                // A reset TCP connection has the same detach semantics.
+                // A reset TCP connection ends the session below.
             }
         }
         finally
         {
-            session.Detach(attachment);
+            session.ReleaseAttachment(attachment);
+            session.Terminate();
+            await session.Completion;
         }
     }
 
-    private static async Task PumpAttachedConnectionAsync(
+    private static async Task PumpSessionAsync(
         ConnectionContext connection,
         ShellSession session,
         SessionAttachment attachment)
@@ -298,9 +266,9 @@ internal sealed class BrokerServer
             var completed = await Task.WhenAny(readTask, session.Completion);
             if (completed == session.Completion)
             {
-                await session.Completion;
                 connection.Cancel();
                 await IgnoreCompletionAsync(readTask);
+                await session.Completion;
                 return;
             }
 
@@ -334,10 +302,6 @@ internal sealed class BrokerServer
                 case MessageType.Pong:
                     ProtocolPayloads.RequireEmpty(frame);
                     break;
-
-                case MessageType.DetachSession:
-                    ProtocolPayloads.RequireEmpty(frame);
-                    return;
 
                 case MessageType.SessionFileStatus:
                     session.HandleFileStatus(

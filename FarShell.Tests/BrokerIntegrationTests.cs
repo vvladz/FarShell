@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.Versioning;
@@ -80,8 +81,48 @@ public sealed class BrokerIntegrationTests
         }
     }
 
+    [Fact(Timeout = 10_000)]
+    public async Task RejectsVersionOneAndRemovedSessionOperations()
+    {
+        using var shutdown = new CancellationTokenSource();
+        var server = new BrokerServer(
+            new BrokerOptions(
+                Port: 0,
+                MaxConnections: 2,
+                MaxSessions: 1,
+                HandshakeTimeout: TimeSpan.FromSeconds(2)));
+        var serverTask = server.RunAsync(shutdown.Token);
+        var port = await server.ListeningPort.WaitAsync(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            using (var oldClient = new TcpClient())
+            {
+                await oldClient.ConnectAsync(IPAddress.Loopback, port);
+                using var writer = new FrameWriter(oldClient.GetStream());
+                await writer.WriteAsync(MessageType.Hello, ProtocolPayloads.EncodeVersion(1));
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var response = await FrameCodec.ReadAsync(oldClient.GetStream(), timeout.Token);
+                Assert.NotNull(response);
+                Assert.Equal(MessageType.Error, response.Type);
+                Assert.Contains("Unsupported protocol version", ProtocolPayloads.DecodeError(response.Payload));
+            }
+
+            using var currentClient = await TestClient.ConnectAsync(port);
+            await currentClient.SendAsync((MessageType)22, ReadOnlyMemory<byte>.Empty);
+            var removedOperation = await currentClient.ReadAsync();
+            Assert.Equal(MessageType.Error, removedOperation.Type);
+            Assert.Contains("Unknown message type", ProtocolPayloads.DecodeError(removedOperation.Payload));
+        }
+        finally
+        {
+            shutdown.Cancel();
+            await WaitForServerStopAsync(serverTask);
+        }
+    }
+
     [Fact(Timeout = 30_000)]
-    public async Task SupportsConcurrentSessionsDetachReattachLimitsAndShutdown()
+    public async Task ConcurrentShellsEndOnDisconnectAndBrokerShutdown()
     {
         using var shutdown = new CancellationTokenSource();
         var server = new BrokerServer(
@@ -92,62 +133,28 @@ public sealed class BrokerIntegrationTests
                 HandshakeTimeout: TimeSpan.FromSeconds(2)));
         var serverTask = server.RunAsync(shutdown.Token);
         var port = await server.ListeningPort.WaitAsync(TimeSpan.FromSeconds(5));
-        var detachedMarkerPath = Path.Combine(
+        var processIdPath = Path.Combine(
             Path.GetTempPath(),
-            $"farshell-detached-{Guid.NewGuid():N}.txt");
+            $"farshell-process-{Guid.NewGuid():N}.txt");
         var serverStopped = false;
 
         try
         {
-            Guid firstSessionId;
-            using (var first = await TestClient.ConnectAsync(port))
-            {
-                firstSessionId = await first.CreateAsync(new TerminalSize(100, 32));
-                await first.SendInputAsync("Write-Output 'FIRST-READY'\r");
-                await first.ReadOutputContainingAsync("FIRST-READY");
-
-                var escapedPath = detachedMarkerPath.Replace("'", "''", StringComparison.Ordinal);
-                await first.SendInputAsync(
-                    $"[Console]::Out.Write(('x' * 200000)); "
-                    + $"[IO.File]::WriteAllText('{escapedPath}', 'done')\r");
-            }
-
-            await WaitForFileAsync(detachedMarkerPath);
-            var detachedSessions = await WaitForSessionsAsync(
-                port,
-                sessions => sessions.Any(
-                    session => session.SessionId == firstSessionId && !session.IsAttached));
-            Assert.Single(detachedSessions);
-
-            using var reattached = await TestClient.ConnectAsync(port);
-            await reattached.AttachAsync(firstSessionId, new TerminalSize(110, 35));
-            var attachedSessions = await WaitForSessionsAsync(
-                port,
-                sessions => sessions.Any(
-                    session => session.SessionId == firstSessionId
-                        && session.IsAttached
-                        && session.Size == new TerminalSize(110, 35)));
-            Assert.Single(attachedSessions);
-            await reattached.SendInputAsync("Write-Output 'AFTER-REATTACH'\r");
-            await reattached.ReadOutputContainingAsync("AFTER-REATTACH");
-
-            using (var competing = await TestClient.ConnectAsync(port))
-            {
-                await competing.SendAsync(
-                    MessageType.AttachSession,
-                    ProtocolPayloads.EncodeAttachSession(
-                        firstSessionId,
-                        new TerminalSize(80, 24)));
-                var response = await competing.ReadAsync();
-                Assert.Equal(MessageType.Error, response.Type);
-                Assert.Contains(
-                    "already attached",
-                    ProtocolPayloads.DecodeError(response.Payload),
-                    StringComparison.OrdinalIgnoreCase);
-            }
+            using var first = await TestClient.ConnectAsync(port);
+            _ = await first.CreateAsync(new TerminalSize(100, 32));
+            await first.ReadOutputContainingAsync("\u001b[2J");
+            var escapedPath = processIdPath.Replace("'", "''", StringComparison.Ordinal);
+            await first.SendInputAsync(
+                $"[IO.File]::WriteAllText('{escapedPath}', [string]$PID); "
+                + "while ($true) { Start-Sleep -Seconds 1 }\r");
+            await WaitForFileAsync(processIdPath);
+            using var firstProcess = Process.GetProcessById(
+                int.Parse(await File.ReadAllTextAsync(processIdPath)));
 
             using var second = await TestClient.ConnectAsync(port);
-            var secondSessionId = await second.CreateAsync(new TerminalSize(90, 28));
+            _ = await second.CreateAsync(new TerminalSize(90, 28));
+            await second.SendInputAsync("Write-Output 'SECOND-READY'\r");
+            await second.ReadOutputContainingAsync("SECOND-READY");
 
             using (var overLimit = await TestClient.ConnectAsync(port))
             {
@@ -162,32 +169,23 @@ public sealed class BrokerIntegrationTests
                     StringComparison.OrdinalIgnoreCase);
             }
 
-            using (var terminator = await TestClient.ConnectAsync(port))
-            {
-                await terminator.SendAsync(
-                    MessageType.TerminateSession,
-                    ProtocolPayloads.EncodeSessionId(secondSessionId));
-                var response = await terminator.ReadAsync();
-                Assert.Equal(MessageType.SessionTerminated, response.Type);
-                Assert.Equal(
-                    secondSessionId,
-                    ProtocolPayloads.DecodeSessionId(response.Payload));
-            }
+            first.Dispose();
+            await firstProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
-            var terminatedExit = ProtocolPayloads.DecodeSessionExit(
-                (await second.ReadUntilAsync(MessageType.SessionExited)).Payload);
-            Assert.Equal(secondSessionId, terminatedExit.SessionId);
+            var available = await WaitForAvailableSessionAsync(
+                port,
+                new TerminalSize(80, 24));
+            using var third = available.Client;
+            var thirdSessionId = available.SessionId;
+            await second.SendInputAsync("Write-Output 'STILL-RUNNING'\r");
+            await second.ReadOutputContainingAsync("STILL-RUNNING");
 
-            await reattached.SendInputAsync("exit\r");
+            await third.SendInputAsync("exit\r");
             var normalExit = ProtocolPayloads.DecodeSessionExit(
-                (await reattached.ReadUntilAsync(MessageType.SessionExited)).Payload);
-            Assert.Equal(firstSessionId, normalExit.SessionId);
+                (await third.ReadUntilAsync(MessageType.SessionExited)).Payload);
+            Assert.Equal(thirdSessionId, normalExit.SessionId);
             Assert.Equal(0, normalExit.ExitCode);
 
-            await WaitForSessionsAsync(port, sessions => sessions.Count == 0);
-
-            using var liveAtShutdown = await TestClient.ConnectAsync(port);
-            _ = await liveAtShutdown.CreateAsync(new TerminalSize(80, 24));
             shutdown.Cancel();
             await WaitForServerStopAsync(serverTask);
             serverStopped = true;
@@ -200,7 +198,7 @@ public sealed class BrokerIntegrationTests
                 await WaitForServerStopAsync(serverTask);
             }
 
-            File.Delete(detachedMarkerPath);
+            File.Delete(processIdPath);
         }
     }
 
@@ -315,23 +313,43 @@ public sealed class BrokerIntegrationTests
         }
     }
 
-    private static async Task<IReadOnlyList<SessionInfo>> WaitForSessionsAsync(
+    private static async Task<(TestClient Client, Guid SessionId)> WaitForAvailableSessionAsync(
         int port,
-        Func<IReadOnlyList<SessionInfo>, bool> predicate)
+        TerminalSize size)
     {
         for (var attempt = 0; attempt < 50; attempt++)
         {
-            using var client = await TestClient.ConnectAsync(port);
-            var sessions = await client.ListAsync();
-            if (predicate(sessions))
+            var client = await TestClient.ConnectAsync(port);
+            var transferred = false;
+            try
             {
-                return sessions;
+                await client.SendAsync(MessageType.CreateSession, ProtocolPayloads.EncodeResize(size));
+                var response = await client.ReadAsync();
+                if (response.Type == MessageType.SessionCreated)
+                {
+                    var sessionId = ProtocolPayloads.DecodeSessionId(response.Payload);
+                    transferred = true;
+                    return (client, sessionId);
+                }
+
+                Assert.Equal(MessageType.Error, response.Type);
+                Assert.Contains(
+                    "limit",
+                    ProtocolPayloads.DecodeError(response.Payload),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                if (!transferred)
+                {
+                    client.Dispose();
+                }
             }
 
             await Task.Delay(100);
         }
 
-        throw new TimeoutException("Session registry did not reach the expected state.");
+        throw new TimeoutException("Disconnected shell did not release its session slot.");
     }
 
     private static async Task WaitForFileAsync(string path)
@@ -346,7 +364,7 @@ public sealed class BrokerIntegrationTests
             await Task.Delay(100);
         }
 
-        throw new TimeoutException("Detached session output was not drained.");
+        throw new TimeoutException("The shell did not write its process ID.");
     }
 
     private static async Task WaitForConditionAsync(Func<bool> predicate)
@@ -423,24 +441,6 @@ public sealed class BrokerIntegrationTests
             var response = await ReadAsync();
             Assert.Equal(MessageType.SessionCreated, response.Type);
             return ProtocolPayloads.DecodeSessionId(response.Payload);
-        }
-
-        internal async Task AttachAsync(Guid sessionId, TerminalSize size)
-        {
-            await SendAsync(
-                MessageType.AttachSession,
-                ProtocolPayloads.EncodeAttachSession(sessionId, size));
-            var response = await ReadAsync();
-            Assert.Equal(MessageType.SessionAttached, response.Type);
-            Assert.Equal(sessionId, ProtocolPayloads.DecodeSessionId(response.Payload));
-        }
-
-        internal async Task<IReadOnlyList<SessionInfo>> ListAsync()
-        {
-            await SendAsync(MessageType.ListSessions, ReadOnlyMemory<byte>.Empty);
-            var response = await ReadAsync();
-            Assert.Equal(MessageType.SessionList, response.Type);
-            return ProtocolPayloads.DecodeSessionList(response.Payload);
         }
 
         internal Task SendInputAsync(string input)

@@ -1,235 +1,63 @@
 # Session Architecture
 
-## Status
+## Status and lifecycle
 
-Multi-session support, in-process session persistence, protocol negotiation,
-and the anonymous authorization boundary described here are implemented.
-Client identity enrollment and security-grade authentication remain future
-work.
+FarShell supports multiple independent, active shells. Each interactive client
+connection creates one ConPTY and one `pwsh.exe -NoLogo` process tree. A shell
+belongs to that connection for its entire lifetime. Disconnecting the client
+terminates the shell and its complete Windows Job Object process tree. Normal
+shell exit reports `SESSION_EXITED` when the connection is still available.
+Broker shutdown terminates all remaining shells.
 
-## Goals
+There is no detach, attach, session listing, or remote termination operation.
+Shells cannot be recovered after a connection is lost. Internal session IDs
+identify exit notifications and file transfers within a live connection; they
+are not handles for resuming a shell.
 
-- Serve multiple independent shell sessions concurrently.
-- Keep a shell session alive when its client disconnects.
-- Allow a client to list, attach to, and terminate available sessions.
-- Keep session ownership independent of the eventual authentication method.
-- Preserve the existing raw-byte terminal transport and ConPTY process model.
+## Startup output
 
-## Non-goals
+ConPTY may produce terminal control sequences before the broker has replied to
+`CREATE_SESSION`. The broker starts ConPTY at the client's requested size and
+leaves its output in the operating system pipe until `SESSION_CREATED` has been
+sent and the connection is active. The output pump then drains that pipe and
+forwards all bytes in order. There is no separate unbounded memory buffer.
 
-- Recover sessions after the broker stops or crashes.
-- Persist ConPTY handles, processes, or session metadata across broker restarts.
-- Buffer or replay terminal output produced while a session is detached.
-- Reconstruct terminal screens with a VT parser or terminal emulator.
-- Provide security-grade authentication or encryption in this phase.
-- Expose the broker directly to an untrusted network.
+An extra resize at activation is unnecessary because ConPTY already has the
+requested size. Subsequent client `RESIZE` frames call `ResizePseudoConsole`.
 
-## Agreed session semantics
+## Components
 
-- The broker process owns every session.
-- Broker shutdown or failure ends all sessions. Closing each session's Windows
-  Job Object terminates its complete process tree.
-- A session has at most one active client attachment.
-- A client disconnect detaches from the session; it does not terminate it.
-- An explicit terminate operation closes the session and its process tree.
-- A normal shell exit ends the session and records its final exit code long
-  enough to notify an attached client and remove the session from the registry.
-- The ConPTY output pipe is always drained. Output is forwarded while a client
-  is attached and discarded while the session is detached.
-- Detached output is never replayed after attachment.
-- Session identifiers are random, opaque, and impractical to guess.
+- `BrokerServer` accepts concurrent connections, negotiates the protocol,
+  authenticates through the current placeholder, and owns each connection's
+  interactive request until disconnect or shell exit.
+- `SessionManager` tracks live shells, enforces the active-session limit, and
+  waits for cleanup on broker shutdown. It exposes no cross-connection session
+  lookup.
+- `ShellSession` owns ConPTY, the process tree, output pump, and one active
+  connection. Its output pump waits for activation before reading ConPTY output.
+- `SessionFileSendService` provides a randomized current-user-only named pipe
+  for `FarShell.Broker.exe --send` and transfers files to the shell's client.
+  An incomplete transfer is aborted when the connection ends.
+- `ConnectionContext` owns one TCP transport, frame writer, and cancellation
+  token. It does not contain a session owner ID.
 
-## Attach and redraw behavior
+The broker defaults to 32 concurrent connections, 16 active shells, and a
+10-second handshake timeout. The process wait currently uses one blocked
+ThreadPool worker per shell; a registered Windows handle wait would be more
+appropriate if the supported session count grows substantially.
 
-Attachment does not restore output generated while the session was detached.
-The broker performs the following sequence:
+## Protocol and compatibility
 
-1. Validate that the connection may attach and reserve the session attachment.
-2. Send the attach success response.
-3. Activate the new output destination.
-4. Unconditionally resize the ConPTY to the attaching client's columns and
-   rows.
-5. Start forwarding subsequent terminal output.
+Protocol version 2 requires `HELLO` / `HELLO_ACK` before an operation. An
+interactive connection sends `CREATE_SESSION`, receives `SESSION_CREATED`, and
+then exchanges `DATA_IN`, `DATA_OUT`, `RESIZE`, `PING`, `PONG`, and file-transfer
+frames until the shell exits or the connection closes. Standalone `--upload`
+and `--download` use separate connections and do not create shells.
 
-When the dimensions change, a well-behaved TUI will normally redraw in response
-to the ConPTY resize. A resize to the same dimensions is not guaranteed to
-produce a redraw. Full screen restoration is explicitly best effort; forcing an
-intermediate fake size or injecting application-specific redraw input is out of
-scope.
+Version 2 removes the version 1 list, attach, detach, and terminate operations.
+The old numeric message values are not reused. Version 1 clients and version 2
+brokers reject each other at handshake; update both binaries together.
 
-## Broker structure
-
-### `ConnectionContext`
-
-Owns one accepted transport connection and contains:
-
-- the TCP client, stream, and serialized frame writer;
-- the remote endpoint;
-- protocol version and negotiated capabilities;
-- cancellation and connection lifetime;
-- the authenticated client identity when authentication is added.
-
-It does not own a ConPTY session.
-
-### `ShellSession`
-
-Owns one persistent runtime session:
-
-- session ID and owner ID;
-- creation time and current terminal size;
-- ConPTY, shell process, and Windows Job Object;
-- continuous input/output pumps;
-- optional current attachment;
-- attached, detached, exiting, and exited state transitions.
-
-The output pump must remain active while detached and discard bytes rather than
-allowing the ConPTY pipe to fill.
-
-### `SessionManager`
-
-Owns the concurrent session registry and is responsible for:
-
-- create, list, attach, detach, and terminate operations;
-- enforcing one attachment per session;
-- filtering sessions by owner identity;
-- session-count and resource limits;
-- coordinated broker shutdown and completion of all session tasks.
-
-### `SessionFileSendService`
-
-Each `ShellSession` owns one `SessionFileSendService`. It:
-
-- exposes a randomized named pipe restricted to the current Windows user;
-- exposes the pipe name and broker directory to the session process through its
-  environment, independently of the selected shell or application;
-- resolves requested files below the current directory inherited by the
-  `FarShell.Broker.exe --send` process;
-- serializes one transfer at a time to the active attachment;
-- waits for client ready/completed/failed acknowledgements;
-- aborts and cleans an incomplete destination when either side fails.
-
-The broker executable handles the public `--send` command itself, so no
-additional executable, shell function, or profile installation is required.
-
-### `BrokerServer`
-
-The accept loop creates a `ConnectionContext` and dispatches it without waiting
-for earlier clients to disconnect. A connection supervisor tracks all handler
-tasks, owns each accepted client, applies connection limits, and awaits clean
-shutdown. Session lifetime is delegated to `SessionManager`.
-
-## Protocol
-
-Every connection performs a versioned handshake before any session or file
-operation or ConPTY process creation. Protocol version 1 contains:
-
-- `HELLO` / `HELLO_ACK`;
-- `LIST_SESSIONS` / `SESSION_LIST`;
-- `CREATE_SESSION` / `SESSION_CREATED`;
-- `ATTACH_SESSION` / `SESSION_ATTACHED`;
-- `DETACH_SESSION`;
-- `TERMINATE_SESSION` / `SESSION_TERMINATED`;
-- `SESSION_EXITED`;
-- `UPLOAD_FILE` / `UPLOAD_READY`;
-- `DOWNLOAD_FILE` / `FILE_METADATA`;
-- `FILE_DATA` / `FILE_COMPLETED`;
-- `SESSION_FILE_START` / `SESSION_FILE_STATUS` / `SESSION_FILE_END` /
-  `SESSION_FILE_ABORT`;
-- `SEND_FILES_REQUEST` / `SEND_FILES_COMPLETED` on the per-session local pipe;
-- `ERROR`.
-
-`DATA_IN`, `DATA_OUT`, `RESIZE`, `PING`, and `PONG` remain data-plane messages
-for an attached session. Disconnect is treated as detach. Shell exit and an
-explicit terminate request are distinct from detach.
-
-This is a breaking protocol revision. Client and broker are updated and
-deployed together; compatibility with the current unversioned PoC protocol is
-not required.
-
-## CLI
-
-```text
-FarShell.Client [host] [port]
-FarShell.Client --list [host] [port]
-FarShell.Client --attach <session-id> [host] [port]
-FarShell.Client --terminate <session-id> [host] [port]
-FarShell.Client --upload <local-path> <remote-path> [host] [port]
-FarShell.Client --download <remote-path> <local-path> [host] [port]
-```
-
-- The default command creates and attaches to a new session.
-- `--list` prints sessions visible to the current client identity.
-- `--attach` attaches exclusively to an existing detached session.
-- `--terminate` terminates a session and its complete process tree.
-- `--upload` and `--download` stream one file on a connection independent of
-  shell-session attachment.
-- `FarShell.Broker.exe --send` can run under any remote shell or session
-  application, resolves relative file patterns from its current directory, and
-  streams matched files to the attached client's startup directory.
-
-`--list` includes the session ID, attached/detached state, creation time, and
-terminal dimensions.
-
-## Identity and authentication boundary
-
-The proposed initial client identity and enrollment mechanism is documented in
-[`AUTH_PROPOSAL.md`](AUTH_PROPOSAL.md). It intentionally prevents accidental
-session-owner mixing but is not a secure authentication protocol. Session code
-must not depend on that specific mechanism.
-
-- Identity resolution occurs after protocol negotiation and before list,
-  create, attach, or terminate operations.
-- Identity resolution produces a broker-owned client identity.
-- The broker derives `OwnerId` from that resolved identity. A client never
-  supplies or selects its own owner ID.
-- Authorization checks create, list, attach, and terminate operations against
-  the identity in `ConnectionContext`.
-- A secure authenticator may later provide the identity without
-  changing `ShellSession` or `SessionManager`.
-
-Until client identity is implemented, all connections use one anonymous
-identity and therefore share one visible session namespace. The plaintext
-identity proposal must not be treated as protection against a network attacker.
-
-## Limits and failure handling
-
-The broker provides configurable bounds for:
-
-- concurrent connections;
-- active shell sessions;
-- handshake duration.
-
-Defaults are 32 concurrent connections, 16 active sessions, and a 10-second
-handshake timeout. No detached-session expiry policy is enabled; one may be
-added later if operational use requires it.
-
-There is no detached-output memory or disk quota because detached output is
-discarded. A failed connection only detaches its session. A failed session only
-closes its own attachment and process tree.
-
-The current process wait uses one blocked ThreadPool worker per session. This is
-acceptable for a small number of sessions, but it should be replaced with a
-registered Windows handle wait before targeting high session counts.
-
-## Remaining sequence
-
-1. Integrate the client identity enrollment described in `AUTH_PROPOSAL.md`
-   without changing session ownership or lifecycle semantics.
-2. Replace the identity provider later if security-grade authentication is
-   required.
-
-## Acceptance criteria
-
-- Multiple clients can run independent shells concurrently.
-- One client failure does not interrupt other connections or sessions.
-- Disconnecting a client leaves its shell and process tree running.
-- Detached sessions continue running even when they produce more output than a
-  pipe buffer can hold; that output is discarded.
-- `--list` reports the sessions visible to the current identity.
-- A detached session can be attached once and rejects a competing attachment.
-- Attach applies the new client dimensions before normal interaction resumes.
-- Commands can be entered successfully after reattachment.
-- Normal shell exit removes the session and reports the exit code when possible.
-- Explicit termination and broker shutdown remove the complete process tree.
-- Repeated connect, detach, attach, terminate, and shutdown races leave no
-  unobserved tasks, blocked handles, or orphaned processes.
+The current transport is plaintext and accepts connections without
+authentication. The proposed single API key and TLS design is recorded in
+[`AUTH_PROPOSAL.md`](AUTH_PROPOSAL.md).

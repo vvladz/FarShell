@@ -11,16 +11,14 @@ internal sealed class SessionManager : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, ShellSession> _sessions = new();
     private readonly ConcurrentDictionary<Guid, Task> _monitors = new();
     private readonly SemaphoreSlim _sessionSlots;
-    private readonly ISessionAuthorizer _authorizer;
     private bool _stopping;
 
-    internal SessionManager(int maxSessions, ISessionAuthorizer authorizer)
+    internal SessionManager(int maxSessions)
     {
         _sessionSlots = new SemaphoreSlim(maxSessions, maxSessions);
-        _authorizer = authorizer;
     }
 
-    internal ShellSession Create(ConnectionIdentity identity, TerminalSize size)
+    internal ShellSession Create(TerminalSize size)
     {
         if (!_sessionSlots.Wait(0))
         {
@@ -43,7 +41,7 @@ internal sealed class SessionManager : IAsyncDisposable
                 }
                 while (_sessions.ContainsKey(sessionId));
 
-                var session = new ShellSession(sessionId, identity.OwnerId, size);
+                var session = new ShellSession(sessionId, size);
                 if (!_sessions.TryAdd(session.Id, session))
                 {
                     throw new InvalidOperationException("Could not register a new session.");
@@ -64,33 +62,6 @@ internal sealed class SessionManager : IAsyncDisposable
             _sessionSlots.Release();
             throw;
         }
-    }
-
-    internal IReadOnlyList<SessionInfo> List(ConnectionIdentity identity)
-    {
-        return _sessions.Values
-            .Where(session => _authorizer.CanAccess(identity, session.OwnerId))
-            .Select(session => session.GetInfo())
-            .OrderBy(session => session.CreatedAt)
-            .ToArray();
-    }
-
-    internal ShellSession Get(ConnectionIdentity identity, Guid sessionId)
-    {
-        if (!_sessions.TryGetValue(sessionId, out var session)
-            || !_authorizer.CanAccess(identity, session.OwnerId))
-        {
-            throw new SessionOperationException("Session not found.");
-        }
-
-        return session;
-    }
-
-    internal async Task TerminateAsync(ConnectionIdentity identity, Guid sessionId)
-    {
-        var session = Get(identity, sessionId);
-        session.Terminate();
-        await session.Completion;
     }
 
     public async ValueTask DisposeAsync()

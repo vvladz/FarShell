@@ -19,8 +19,6 @@ try
     {
         return options.Operation switch
         {
-            ClientOperation.List => await client.ListAsync(),
-            ClientOperation.Terminate => await client.TerminateAsync(options.SessionId!.Value),
             ClientOperation.Upload => await client.UploadAsync(
                 options.LocalPath!,
                 options.RemotePath!),
@@ -39,9 +37,7 @@ try
         eventArgs.Cancel = true;
     };
 
-    return options.Operation == ClientOperation.Create
-        ? await client.CreateAsync()
-        : await client.AttachAsync(options.SessionId!.Value);
+    return await client.CreateAsync();
 }
 catch (Exception exception)
 {

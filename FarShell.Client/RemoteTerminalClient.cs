@@ -23,68 +23,7 @@ internal sealed class RemoteTerminalClient
 
     internal Task<int> CreateAsync()
     {
-        return RunInteractiveAsync(null);
-    }
-
-    internal Task<int> AttachAsync(Guid sessionId)
-    {
-        return RunInteractiveAsync(sessionId);
-    }
-
-    internal async Task<int> ListAsync()
-    {
-        using var connection = await ConnectAsync();
-        await connection.Writer.WriteAsync(
-            MessageType.ListSessions,
-            ReadOnlyMemory<byte>.Empty);
-
-        var response = await ReadRequiredAsync(connection.Transport);
-        if (response.Type != MessageType.SessionList)
-        {
-            throw new ProtocolException($"Expected SESSION_LIST, received {response.Type}.");
-        }
-
-        var sessions = ProtocolPayloads.DecodeSessionList(response.Payload);
-        if (sessions.Count == 0)
-        {
-            Console.WriteLine("No sessions.");
-            return 0;
-        }
-
-        Console.WriteLine("SESSION ID                       STATE     CREATED UTC          SIZE");
-        foreach (var session in sessions)
-        {
-            Console.WriteLine(
-                $"{session.SessionId:N}  "
-                + $"{(session.IsAttached ? "attached" : "detached"),-8}  "
-                + $"{session.CreatedAt.UtcDateTime:yyyy-MM-dd HH:mm:ss}  "
-                + $"{session.Size.Columns}x{session.Size.Rows}");
-        }
-
-        return 0;
-    }
-
-    internal async Task<int> TerminateAsync(Guid sessionId)
-    {
-        using var connection = await ConnectAsync();
-        await connection.Writer.WriteAsync(
-            MessageType.TerminateSession,
-            ProtocolPayloads.EncodeSessionId(sessionId));
-
-        var response = await ReadRequiredAsync(connection.Transport);
-        if (response.Type != MessageType.SessionTerminated)
-        {
-            throw new ProtocolException($"Expected SESSION_TERMINATED, received {response.Type}.");
-        }
-
-        var terminatedId = ProtocolPayloads.DecodeSessionId(response.Payload);
-        if (terminatedId != sessionId)
-        {
-            throw new ProtocolException("Broker confirmed termination for a different session.");
-        }
-
-        Console.WriteLine($"Session {sessionId:N} terminated.");
-        return 0;
+        return RunInteractiveAsync();
     }
 
     internal async Task<int> UploadAsync(string localPath, string remotePath)
@@ -169,49 +108,31 @@ internal sealed class RemoteTerminalClient
         return 0;
     }
 
-    private async Task<int> RunInteractiveAsync(Guid? requestedSessionId)
+    private async Task<int> RunInteractiveAsync()
     {
         using var connection = await ConnectAsync();
         using var inputPump = new ConsoleInputPump(connection.Writer);
         await inputPump.Ready;
         var initialSize = GetTerminalSize();
-        if (requestedSessionId is { } sessionId)
-        {
-            await connection.Writer.WriteAsync(
-                MessageType.AttachSession,
-                ProtocolPayloads.EncodeAttachSession(sessionId, initialSize));
-        }
-        else
-        {
-            await connection.Writer.WriteAsync(
-                MessageType.CreateSession,
-                ProtocolPayloads.EncodeResize(initialSize));
-        }
+        await connection.Writer.WriteAsync(
+            MessageType.CreateSession,
+            ProtocolPayloads.EncodeResize(initialSize));
 
         var response = await ReadRequiredAsync(connection.Transport);
-        var expectedResponse = requestedSessionId.HasValue
-            ? MessageType.SessionAttached
-            : MessageType.SessionCreated;
-        if (response.Type != expectedResponse)
+        if (response.Type != MessageType.SessionCreated)
         {
             throw new ProtocolException(
-                $"Expected {expectedResponse}, received {response.Type}.");
+                $"Expected {MessageType.SessionCreated}, received {response.Type}.");
         }
 
-        var attachedSessionId = ProtocolPayloads.DecodeSessionId(response.Payload);
-        if (requestedSessionId.HasValue && attachedSessionId != requestedSessionId.Value)
-        {
-            throw new ProtocolException("Broker attached a different session.");
-        }
-
-        Console.Error.WriteLine($"Session {attachedSessionId:N} attached.");
+        var sessionId = ProtocolPayloads.DecodeSessionId(response.Payload);
 
         inputPump.StartForwarding();
         using var sessionCancellation = new CancellationTokenSource();
         var receiveTask = ReceiveAsync(
             connection.Transport,
             connection.Writer,
-            attachedSessionId,
+            sessionId,
             sessionCancellation.Token);
         var inputTask = inputPump.Completion;
         var resizeTask = MonitorResizeAsync(

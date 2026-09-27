@@ -31,8 +31,8 @@ This PoC contains five projects:
 - `FarShell.Tests` — protocol and Windows end-to-end session lifecycle tests.
 
 It intentionally has no SSH implementation, authentication, encryption,
-cross-restart session persistence, Windows service, GUI, terminal emulator, or
-directory synchronization.
+session recovery, Windows service, GUI, terminal emulator, or directory
+synchronization.
 
 ## Requirements
 
@@ -66,7 +66,8 @@ rerunning the workflow for the same commit reuses its existing tag. A pushed
 
 > [!IMPORTANT]
 > The broker listens on all IPv4 interfaces and has no authentication or
-> encryption. All connections currently share one anonymous session namespace.
+> encryption. A client connection can create a shell with the broker's Windows
+> identity.
 > Restrict inbound TCP port 8022 to trusted clients.
 
 ## Run the local PoC
@@ -114,15 +115,9 @@ dotnet run --project .\FarShell.Client -- --output-batch-ms 2 127.0.0.1 8022
 Valid values are 0 through 100 milliseconds. Use `0` to disable batching and
 restore immediate rendering of every `DATA_OUT` payload.
 
-The default command creates and attaches to a new session. The client prints
-the new session ID before terminal forwarding starts. Session management uses
-the same optional host and port suffix:
-
-```powershell
-dotnet run --project .\FarShell.Client -- --list 127.0.0.1 8022
-dotnet run --project .\FarShell.Client -- --attach <session-id> 127.0.0.1 8022
-dotnet run --project .\FarShell.Client -- --terminate <session-id> 127.0.0.1 8022
-```
+The default command creates a new shell. Multiple clients can run independent
+shells concurrently. Closing a client ends its shell and process tree; shells
+cannot be detached or resumed.
 
 Upload a local file to an exact path on the broker machine, or download a
 broker-side file to an exact local path:
@@ -198,7 +193,8 @@ N bytes  payload
 ```
 
 The maximum payload is 16 MiB. Every connection starts with `HELLO` and
-`HELLO_ACK` carrying protocol version `1` before it may perform an operation.
+`HELLO_ACK` carrying protocol version `2` before it may perform an operation.
+Client and broker binaries must be updated together when moving from version 1.
 
 | Value | Message | Direction | Payload |
 |---:|---|---|---|
@@ -209,11 +205,7 @@ The maximum payload is 16 MiB. Every connection starts with `HELLO` and
 | 5 | `PONG` | either | empty |
 | 16 | `HELLO` | client -> broker | little-endian Int32 protocol version |
 | 17 | `HELLO_ACK` | broker -> client | selected protocol version |
-| 18–19 | `LIST_SESSIONS` / `SESSION_LIST` | request / response | visible session metadata |
 | 20–21 | `CREATE_SESSION` / `SESSION_CREATED` | request / response | terminal size / session ID |
-| 22–23 | `ATTACH_SESSION` / `SESSION_ATTACHED` | request / response | session ID and size / session ID |
-| 24 | `DETACH_SESSION` | client -> broker | empty |
-| 25–26 | `TERMINATE_SESSION` / `SESSION_TERMINATED` | request / response | session ID |
 | 27 | `SESSION_EXITED` | broker -> client | session ID and little-endian Int32 exit code |
 | 28 | `ERROR` | broker -> client | UTF-8 error text |
 | 29 | `UPLOAD_FILE` | client -> broker | little-endian Int64 length and UTF-8 destination path |
@@ -257,16 +249,15 @@ adds non-recursive file-name globbing for an attached interactive session.
 
 ## Session lifecycle
 
-1. The client negotiates protocol version 1 and requests create or attach.
-2. A new session creates one ConPTY and starts `pwsh.exe -NoLogo`.
-3. Client input and ConPTY output are proxied as raw bytes while attached.
-4. Client disconnect detaches without terminating the shell. The broker keeps
-   draining and discarding ConPTY output so the detached process cannot block
-   on a full output pipe.
-5. Attach reserves the session exclusively and resizes ConPTY to the new
-   terminal dimensions. Detached output is not replayed.
-6. Normal shell exit or explicit termination removes the session. Broker
-   shutdown closes every session's Job Object and complete process tree.
+1. The client negotiates protocol version 2 and requests a new shell.
+2. The broker creates one ConPTY at the client's terminal size and starts
+   `pwsh.exe -NoLogo`.
+3. Initial ConPTY output stays in its pipe until the broker sends
+   `SESSION_CREATED`. The broker then forwards all output in order.
+4. Client input and ConPTY output are proxied as raw bytes. Resize messages
+   update the ConPTY dimensions.
+5. Client disconnect, normal shell exit, or broker shutdown ends the session.
+   Disconnect and shutdown close its Windows Job Object and process tree.
 
 ## Acceptance checklist
 
@@ -296,10 +287,9 @@ running each tool locally in Windows Terminal on the corporate laptop.
 Then verify the session lifecycle:
 
 - [ ] two clients can use independent shells concurrently
-- [ ] closing a client leaves its session visible as detached in `--list`
-- [ ] `--attach` resumes input and output and rejects a competing attachment
-- [ ] detached output is discarded without blocking the shell
-- [ ] `--terminate` removes the session and its complete process tree
+- [ ] initial shell prompt and terminal control sequences appear correctly
+- [ ] closing a client ends its shell and complete process tree
+- [ ] a disconnected shell releases its session slot for a new client
 - [ ] broker shutdown removes every remaining session and process tree
 - [ ] `FarShell.Broker.exe --send` resolves from the remote current directory
   and saves below the client's startup directory
@@ -307,12 +297,9 @@ Then verify the session lifecycle:
 
 ## Known PoC boundaries
 
-- Sessions exist only while the broker process remains alive.
-- A session accepts one attachment at a time; multiple sessions and connections
-  may run concurrently.
-- Detached terminal output is discarded and cannot be replayed.
-- All clients currently use one anonymous owner identity and can see the same
-  session namespace.
+- A shell exists only while its client connection and broker process remain
+  alive. Multiple independent shells and connections may run concurrently.
+- Shells cannot be resumed after a connection is lost.
 - The same anonymous, unencrypted connection can read and replace any file
   accessible to the broker's Windows identity.
 - `--send` can create or replace files below the attached client's startup
@@ -327,6 +314,5 @@ The implemented multi-session lifecycle and future authentication boundaries
 are documented in
 [`SESSION_ARCHITECTURE.md`](SESSION_ARCHITECTURE.md).
 
-The proposed broker-approved client identity flow is documented in
-[`AUTH_PROPOSAL.md`](AUTH_PROPOSAL.md). It is explicitly not a secure
-authentication protocol while the transport remains unencrypted.
+The proposed single API key and TLS design is documented in
+[`AUTH_PROPOSAL.md`](AUTH_PROPOSAL.md). It is not implemented yet.

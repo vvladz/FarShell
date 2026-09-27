@@ -16,15 +16,11 @@ public sealed class ClientOptionsTests
     }
 
     [Fact]
-    public void ParsesAttachWithEndpoint()
+    public void ParsesCreateWithEndpoint()
     {
-        var sessionId = Guid.NewGuid();
+        var options = ClientOptions.Parse(["server", "9000"]);
 
-        var options = ClientOptions.Parse(
-            ["--attach", sessionId.ToString("N"), "server", "9000"]);
-
-        Assert.Equal(ClientOperation.Attach, options.Operation);
-        Assert.Equal(sessionId, options.SessionId);
+        Assert.Equal(ClientOperation.Create, options.Operation);
         Assert.Equal("server", options.Endpoint.Host);
         Assert.Equal(9000, options.Endpoint.Port);
     }
@@ -77,21 +73,6 @@ public sealed class ClientOptionsTests
     }
 
     [Fact]
-    public void SessionOperationUsesDefaultServerFromEnvironmentValue()
-    {
-        var sessionId = Guid.NewGuid();
-
-        var options = ClientOptions.Parse(
-            ["--attach", sessionId.ToString("N")],
-            "server.example:9000");
-
-        Assert.Equal(ClientOperation.Attach, options.Operation);
-        Assert.Equal(sessionId, options.SessionId);
-        Assert.Equal("server.example", options.Endpoint.Host);
-        Assert.Equal(9000, options.Endpoint.Port);
-    }
-
-    [Fact]
     public void UsesOutputBatchDelayFromEnvironmentValue()
     {
         var options = ClientOptions.Parse(
@@ -104,12 +85,8 @@ public sealed class ClientOptionsTests
     [Fact]
     public void CommandLineOutputBatchDelayOverridesEnvironmentValue()
     {
-        var sessionId = Guid.NewGuid();
-
         var options = ClientOptions.Parse(
             [
-                "--attach",
-                sessionId.ToString("N"),
                 "--output-batch-ms",
                 "2",
                 "server",
@@ -117,8 +94,7 @@ public sealed class ClientOptionsTests
             ],
             defaultOutputBatchMilliseconds: "8");
 
-        Assert.Equal(ClientOperation.Attach, options.Operation);
-        Assert.Equal(sessionId, options.SessionId);
+        Assert.Equal(ClientOperation.Create, options.Operation);
         Assert.Equal("server", options.Endpoint.Host);
         Assert.Equal(9000, options.Endpoint.Port);
         Assert.Equal(TimeSpan.FromMilliseconds(2), options.OutputBatchDelay);
@@ -152,5 +128,14 @@ public sealed class ClientOptionsTests
     public void RejectsUnknownOperation()
     {
         Assert.Throws<ArgumentException>(() => ClientOptions.Parse(["--unknown"]));
+    }
+
+    [Theory]
+    [InlineData("--list")]
+    [InlineData("--attach")]
+    [InlineData("--terminate")]
+    public void RejectsRemovedSessionOperations(string operation)
+    {
+        Assert.Throws<ArgumentException>(() => ClientOptions.Parse([operation]));
     }
 }
