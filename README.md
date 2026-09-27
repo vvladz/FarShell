@@ -303,9 +303,9 @@ Then verify the session lifecycle:
 - Shells cannot be resumed after a connection is lost.
 - The same anonymous, unencrypted connection can read and replace any file
   accessible to the broker's Windows identity.
-- `--send` can create or replace files below the attached client's startup
-  directory. The broker rejects rooted paths and `..` segments, and the client
-  independently repeats rooted-path and normalized containment checks.
+- `--send` accepts relative destinations below the attached client's startup
+  directory. The current path check does not account for Windows junctions or
+  other reparse points; see [issue #6](https://github.com/vvladz/FarShell/issues/6).
 - `PING`/`PONG` only proves the stream is responsive.
 - Broker startup must remain in the intended interactive user session. Running
   it as `LocalSystem` or another account changes the execution identity and
@@ -315,5 +315,7 @@ The implemented multi-session lifecycle and future authentication boundaries
 are documented in
 [`SESSION_ARCHITECTURE.md`](SESSION_ARCHITECTURE.md).
 
-The proposed single API key and TLS design is documented in
-[`AUTH_PROPOSAL.md`](AUTH_PROPOSAL.md). It is not implemented yet.
+Future work is tracked in [GitHub Issues](https://github.com/vvladz/FarShell/issues),
+including [TLS and API-key authentication](https://github.com/vvladz/FarShell/issues/4)
+and [broker-defined launch profiles](https://github.com/vvladz/FarShell/issues/5).
+Neither is implemented yet.

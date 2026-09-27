@@ -62,5 +62,5 @@ The old numeric message values are not reused. Version 1 clients and version 2
 brokers reject each other at handshake; update both binaries together.
 
 The current transport is plaintext and accepts connections without
-authentication. The proposed single API key and TLS design is recorded in
-[`AUTH_PROPOSAL.md`](AUTH_PROPOSAL.md).
+authentication. TLS and single-key authentication are tracked in
+[GitHub issue #4](https://github.com/vvladz/FarShell/issues/4).
