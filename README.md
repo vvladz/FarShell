@@ -253,7 +253,8 @@ adds non-recursive file-name globbing for an attached interactive session.
 2. The broker creates one ConPTY at the client's terminal size and starts
    `pwsh.exe -NoLogo`.
 3. Initial ConPTY output stays in its pipe until the broker sends
-   `SESSION_CREATED`. The broker then forwards all output in order.
+   `SESSION_CREATED`. The client clears and homes its terminal once, then the
+   broker forwards all output in order.
 4. Client input and ConPTY output are proxied as raw bytes. Resize messages
    update the ConPTY dimensions.
 5. Client disconnect, normal shell exit, or broker shutdown ends the session.

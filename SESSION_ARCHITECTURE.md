@@ -20,7 +20,10 @@ ConPTY may produce terminal control sequences before the broker has replied to
 `CREATE_SESSION`. The broker starts ConPTY at the client's requested size and
 leaves its output in the operating system pipe until `SESSION_CREATED` has been
 sent and the connection is active. The output pump then drains that pipe and
-forwards all bytes in order. There is no separate unbounded memory buffer.
+forwards all bytes in order. Before rendering those bytes, the client clears
+the local screen and moves its cursor home. This aligns clients with ConPTY
+instances that do not emit their own startup clear/home sequence. There is no
+separate unbounded memory buffer.
 
 An extra resize at activation is unnecessary because ConPTY already has the
 requested size. Subsequent client `RESIZE` frames call `ResizePseudoConsole`.

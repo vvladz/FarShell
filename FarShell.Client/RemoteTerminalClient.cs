@@ -6,6 +6,7 @@ namespace FarShell.Client;
 internal sealed class RemoteTerminalClient
 {
     private const int FileBufferSize = 64 * 1024;
+    private static readonly byte[] InitialTerminalReset = "\u001b[2J\u001b[H"u8.ToArray();
     private static readonly TimeSpan ResizePollInterval = TimeSpan.FromMilliseconds(200);
     private static readonly TimeSpan PingInterval = TimeSpan.FromSeconds(30);
     private readonly string _host;
@@ -127,12 +128,19 @@ internal sealed class RemoteTerminalClient
 
         var sessionId = ProtocolPayloads.DecodeSessionId(response.Payload);
 
+        // A remote ConPTY can start without clearing or homing the local terminal.
+        // Align the terminal with its new screen before rendering any shell output.
+        var standardOutput = Console.OpenStandardOutput();
+        await standardOutput.WriteAsync(InitialTerminalReset);
+        await standardOutput.FlushAsync();
+
         inputPump.StartForwarding();
         using var sessionCancellation = new CancellationTokenSource();
         var receiveTask = ReceiveAsync(
             connection.Transport,
             connection.Writer,
             sessionId,
+            standardOutput,
             sessionCancellation.Token);
         var inputTask = inputPump.Completion;
         var resizeTask = MonitorResizeAsync(
@@ -300,9 +308,9 @@ internal sealed class RemoteTerminalClient
         Stream transport,
         FrameWriter writer,
         Guid sessionId,
+        Stream standardOutput,
         CancellationToken cancellationToken)
     {
-        var standardOutput = Console.OpenStandardOutput();
         await using var outputBatcher = new TerminalOutputBatcher(
             standardOutput,
             _outputBatchDelay);
