@@ -431,7 +431,8 @@ public sealed class ConPtySession : IDisposable
         {
             BasicLimitInformation = new JobObjectBasicLimitInformation
             {
-                LimitFlags = NativeMethods.JobObjectLimitKillOnJobClose,
+                LimitFlags = NativeMethods.JobObjectLimitKillOnJobClose
+                    | NativeMethods.JobObjectLimitBreakawayOk,
             },
         };
 

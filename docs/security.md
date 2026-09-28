@@ -103,8 +103,10 @@ state lock and require explicit `--confirm` because every client's access change
 ## Boundaries
 
 An authenticated shell has the broker user's privileges and can change its files
-or inspect its processes. Local malware or an administrator can bypass protections
-available to a normal user process. FarShell is not an isolation boundary against
+or inspect its processes. A program can explicitly break a child process away
+from the shell's Job Object, leaving it running after disconnect or broker stop.
+Local malware or an administrator can bypass protections available to a normal
+user process. FarShell is not an isolation boundary against
 either. Restrict network reachability to intended clients and safeguard access to
 the broker's desktop account.
 

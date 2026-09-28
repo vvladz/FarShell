@@ -38,15 +38,19 @@ notifications; they cannot be used for reconnecting.
 ## Process lifecycle
 
 A client owns its shell for the connection's entire lifetime. Closing the client
-or stopping the broker terminates the complete Windows Job Object process tree.
-Normal shell exit sends `SESSION_EXITED` with the exit code. There is no detach,
-attach, session listing, remote termination command, or persistence across restart.
+or stopping the broker terminates the shell and processes still in its Windows
+Job Object. Normal shell exit sends `SESSION_EXITED` with the exit code. There is
+no FarShell detach, attach, session listing, remote termination command, or
+session persistence across restart.
 
-The process starts suspended, joins a `KILL_ON_JOB_CLOSE` Job Object, and then
-resumes. ConPTY output waits in the OS pipe until `SESSION_CREATED` is sent and
-the connection becomes active. There is no unbounded replay buffer. Output writes
-use the attachment cancellation token so a client that stops reading cannot
-prevent disconnect or broker shutdown from cleaning up the process tree.
+The process starts suspended, joins a `KILL_ON_JOB_CLOSE | BREAKAWAY_OK` Job
+Object, and then resumes. Ordinary descendants remain in the job and are
+terminated with it. A program that explicitly creates a child with
+`CREATE_BREAKAWAY_FROM_JOB` can leave that child running after disconnect or
+broker shutdown; FarShell no longer manages it. ConPTY output waits in the OS
+pipe until `SESSION_CREATED` is sent and the connection becomes active. There
+is no unbounded replay buffer. Output writes use the attachment cancellation
+token so a client that stops reading cannot prevent job cleanup.
 
 Profiles are validated before the listener opens and resolved before acquiring a
 shell slot. Immutable, generic process-launch settings flow through

@@ -12,7 +12,8 @@ login is performed.
 - Adaptive output batching, synchronized-output support, and a `🛜` window title.
 
 Each shell lasts for its connection. Disconnecting or stopping the broker ends
-the shell and its process tree.
+the shell and its ordinary child processes. Programs that explicitly request
+Windows Job Object breakaway can keep their child processes running.
 
 ## Install
 

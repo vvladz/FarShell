@@ -34,8 +34,9 @@ internal static class ClientUsage
           FarShell.Client.exe --download C:\Temp\result.log .\result.log
           Inside a remote shell: FarShell.Broker.exe --send .\results\*.log
 
-        A disconnected shell and its process tree are terminated. Transfers replace
-        a destination only after completion. Exit codes: 0 success, 1 failure,
+        A disconnected shell and ordinary child processes are terminated. Children
+        explicitly broken away from the Windows Job Object may keep running.
+        Transfers replace a destination only after completion. Exit codes: 0 success, 1 failure,
         2 invalid arguments; interactive sessions return the remote shell exit code.
         Documentation: https://github.com/vvladz/FarShell/tree/master/docs
         """;

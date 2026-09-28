@@ -16,6 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\FarShell.Broker\FarShell.Broker.csproj" />
     <ProjectReference Include="..\..\src\FarShell.Client\FarShell.Client.csproj" />
+    <ProjectReference Include="..\..\src\FarShell.ConPTY\FarShell.ConPTY.csproj" />
     <ProjectReference Include="..\..\src\FarShell.Protocol\FarShell.Protocol.csproj" />
   </ItemGroup>
 

@@ -36,8 +36,9 @@ in Windows Terminal. The client preserves local mouse and QuickEdit
 settings. Do not run the interactive client with redirected stdin as a substitute
 for a terminal; standalone transfer commands work without interactive console input.
 
-Closing the connection ends the remote process tree. Start a new
-connection for a new shell; there is no detached session to recover.
+Closing the connection ends the remote shell and its ordinary child processes.
+Explicitly broken-away children may continue running. Start a new connection
+for a new shell; there is no detached FarShell session to recover.
 
 ## Useful diagnostics
 

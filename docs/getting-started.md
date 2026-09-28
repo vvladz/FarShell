@@ -62,7 +62,9 @@ $env:FARSHELL_SERVER = '192.168.1.110:8022'
 
 The environment example affects the current terminal. Use your preferred
 Windows environment management to persist it. Closing the connection terminates
-its shell and child processes. There is no detach or reconnect operation.
+its shell and ordinary child processes. Programs that explicitly request Job
+Object breakaway can leave children running. There is no session detach or
+reconnect operation.
 
 ## Upgrade and rollback
 

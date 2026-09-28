@@ -12,6 +12,7 @@ internal static class NativeMethods
     internal const int StartfUseStdHandles = 0x00000100;
     internal const int ProcThreadAttributePseudoConsole = 0x00020016;
     internal const int JobObjectExtendedLimitInformation = 9;
+    internal const uint JobObjectLimitBreakawayOk = 0x00000800;
     internal const uint JobObjectLimitKillOnJobClose = 0x00002000;
     internal const uint Infinite = 0xFFFFFFFF;
     internal const uint WaitFailed = 0xFFFFFFFF;
