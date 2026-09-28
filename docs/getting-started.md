@@ -75,6 +75,10 @@ Shells are never preserved across broker restarts. Back up configuration and
 protected state before identity changes; DPAPI-protected files belong to the
 Windows user that created them.
 
+When upgrading a client from a version that stored credentials in `clients/`,
+move its `.bin` files to `servers/` within the client state directory before
+running the updated client. Otherwise, trust and pair each endpoint again.
+
 ## Run from source
 
 ```powershell

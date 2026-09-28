@@ -36,6 +36,7 @@ public sealed class SecurityTests : IAsyncLifetime
             rule => Assert.Equal(user, rule.IdentityReference));
         var credentials = new ClientCredentials(identity.Fingerprint, identity.Key);
         credentials.Save(_root, "localhost:8022");
+        Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "servers"), "*.bin"));
         Assert.Equal(identity.Key, ClientCredentials.Load(_root, "localhost:8022")!.Key);
         using var held = BrokerIdentity.AcquireLock(_root);
         Assert.Throws<IOException>(() => BrokerIdentity.AcquireLock(_root));

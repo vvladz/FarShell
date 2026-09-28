@@ -6,7 +6,7 @@ namespace FarShell.Security;
 public sealed record ClientCredentials(string Fingerprint, byte[]? Key)
 {
     public static string Endpoint(string host, int port) => $"{host.ToLowerInvariant()}:{port}";
-    private static string PathFor(string directory, string endpoint) => Path.Combine(directory, "clients",
+    private static string PathFor(string directory, string endpoint) => Path.Combine(directory, "servers",
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint))) + ".bin");
 
     public static ClientCredentials? Load(string directory, string endpoint)

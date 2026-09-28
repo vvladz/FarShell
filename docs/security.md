@@ -51,7 +51,7 @@ commands that administer a running broker must use its exact directory.
 
 - `broker.bin` contains the certificate/private key and API key, encrypted with
   Windows DPAPI for the current user.
-- `clients/<endpoint-hash>.bin` contains a certificate pin and optional API key,
+- `servers/<endpoint-hash>.bin` contains a certificate pin and optional API key,
   also protected with DPAPI.
 - `broker.lock` prevents two brokers or an identity-rotation command from modifying
   the same live broker state.
