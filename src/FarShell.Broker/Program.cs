@@ -58,7 +58,7 @@ try
         return 0;
     }
 
-    var profiles = SessionProfiles.Load(options.ConfigPath);
+    var profiles = SessionProfiles.Load(options.ConfigPath, stateDirectory);
     using var identity = BrokerIdentity.LoadOrCreate(stateDirectory);
     Console.WriteLine($"Broker certificate SHA-256: {identity.Fingerprint}");
     await using var pairing = new PairingService(stateDirectory);

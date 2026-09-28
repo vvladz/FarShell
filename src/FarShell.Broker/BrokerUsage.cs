@@ -15,8 +15,8 @@ internal static class BrokerUsage
 
         Server options:
           --config <path>                 Profile configuration JSON.
-                                          Default: %LOCALAPPDATA%\FarShell\config.json.
-          --state-dir <directory>         Private certificate/key storage.
+                                          Default: config.json in the state directory.
+          --state-dir <directory>         Private state and default config directory.
                                           Default: ~/.farshell.
           --max-connections <1-1024>       Connection limit (default: 32).
           --max-sessions <1-1024>          Active shell limit (default: 16).

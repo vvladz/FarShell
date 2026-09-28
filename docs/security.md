@@ -55,6 +55,7 @@ commands that administer a running broker must use its exact directory.
   also protected with DPAPI.
 - `broker.lock` prevents two brokers or an identity-rotation command from modifying
   the same live broker state.
+- `config.json` contains the broker's launch profiles in plaintext, when configured.
 
 Storage directories have protected ACLs granting access to the current user.
 Secrets are not command-line arguments or log output. State is written to a

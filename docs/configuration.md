@@ -1,7 +1,8 @@
 # Session profiles
 
-The broker loads `%LOCALAPPDATA%\FarShell\config.json` once at startup. Use
-`--config <path>` to select another file. The client never reads this file.
+The broker loads `config.json` from its state directory (`~/.farshell` by
+default) once at startup. `--state-dir <directory>` changes that directory;
+`--config <path>` selects a specific file. The client never reads this file.
 
 If the default file is absent, the built-in `default` profile starts
 `pwsh.exe -NoLogo`, inherits the broker's startup environment and working

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using FarShell.ConPTY;
 using FarShell.Protocol;
+using FarShell.Security;
 
 namespace FarShell.Broker;
 
@@ -24,7 +25,7 @@ internal sealed class SessionProfiles
         => _profiles.TryGetValue(string.IsNullOrEmpty(name) ? _default : name, out var profile)
             ? profile : throw new SessionOperationException($"Unknown profile: {name}.");
 
-    internal static SessionProfiles Load(string? configPath = null)
+    internal static SessionProfiles Load(string? configPath = null, string? stateDirectory = null)
     {
         var startup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
@@ -32,8 +33,7 @@ internal sealed class SessionProfiles
             startup[(string)entry.Key] = (string)entry.Value!;
         }
 
-        var path = configPath ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FarShell", "config.json");
+        var path = configPath ?? Path.Combine(stateDirectory ?? PrivateStorage.DefaultDirectory, "config.json");
         if (configPath is null && !File.Exists(path))
         {
             var launch = new ProcessLaunchSettings(ResolveExecutable("pwsh.exe", startup),

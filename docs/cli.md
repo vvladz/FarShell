@@ -62,8 +62,8 @@ FarShell.Broker.exe --send <relative-file-or-pattern> [more-files...]
 | `--max-connections <count>` | 32; range 1–1024 |
 | `--max-sessions <count>` | 16; range 1–1024 |
 | `--handshake-timeout-seconds <seconds>` | 10; range 1–300 |
-| `--config <path>` | `%LOCALAPPDATA%\FarShell\config.json` |
-| `--state-dir <directory>` | `~/.farshell` |
+| `--config <path>` | `config.json` in the broker state directory |
+| `--state-dir <directory>` | `~/.farshell`; also sets the default location for `config.json` |
 
 The listener binds all IPv4 interfaces. The setup timeout covers TLS,
 HELLO, authentication, and receipt of the first operation. It does not limit

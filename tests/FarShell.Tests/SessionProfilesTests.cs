@@ -49,6 +49,28 @@ public sealed class SessionProfilesTests
         => Assert.Throws<FileNotFoundException>(() => SessionProfiles.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".json")));
 
     [Fact]
+    public void MissingDefaultConfigUsesBuiltInProfile()
+    {
+        var state = Path.Combine(Path.GetTempPath(), $"farshell-config-{Guid.NewGuid():N}");
+        Assert.Equal("default", SessionProfiles.Load(stateDirectory: state).Resolve(null).Name);
+    }
+
+    [Fact]
+    public void LoadsConfigFromCustomStateDirectory()
+    {
+        var state = Path.Combine(Path.GetTempPath(), $"farshell-config-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(state);
+        try
+        {
+            File.WriteAllText(Path.Combine(state, "config.json"), """
+                {"defaultProfile":"unified","profiles":{"unified":{"shell":{"file":"pwsh.exe"}}}}
+                """);
+            Assert.Equal("unified", SessionProfiles.Load(stateDirectory: state).Resolve(null).Name);
+        }
+        finally { Directory.Delete(state, recursive: true); }
+    }
+
+    [Fact]
     public void CreatePayloadValidatesProfilesAndRejectsVersionTwoShape()
     {
         var request = new CreateSessionRequest(new(120, 30), "Work-1");

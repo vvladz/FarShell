@@ -33,7 +33,7 @@ internal sealed class BrokerServer
         _pairing = pairing;
         _authenticator = new ApiKeyConnectionAuthenticator(identity.Key);
         _sessions = new SessionManager(options.MaxSessions);
-        _profiles = profiles ?? SessionProfiles.Load(options.ConfigPath);
+        _profiles = profiles ?? SessionProfiles.Load(options.ConfigPath, options.StateDirectory);
     }
 
     internal Task<int> ListeningPort => _listeningPort.Task;
