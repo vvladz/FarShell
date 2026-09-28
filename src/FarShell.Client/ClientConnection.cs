@@ -108,7 +108,8 @@ internal sealed class ClientConnection : IDisposable
         }
         else
         {
-            Console.Error.WriteLine($"First connection to {host}:{port}. Broker certificate SHA-256:\n{fingerprint}");
+            Console.Error.WriteLine($"First connection to {host}:{port}. Broker certificate SHA-256:");
+            Console.Error.WriteLine(fingerprint);
             if (Console.IsInputRedirected)
             {
                 throw new AuthenticationException("Certificate approval requires a terminal. Verify the fingerprint and run --trust <fingerprint> first.");

@@ -58,7 +58,8 @@ try
 }
 catch (ArgumentException exception)
 {
-    Console.Error.WriteLine($"Error: {exception.Message}\nRun FarShell.Client.exe --help for usage.");
+    Console.Error.WriteLine($"Error: {exception.Message}");
+    Console.Error.WriteLine("Run FarShell.Client.exe --help for usage.");
     return 2;
 }
 catch (Exception exception)

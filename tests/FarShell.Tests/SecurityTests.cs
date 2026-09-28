@@ -164,6 +164,45 @@ public sealed class SecurityTests : IAsyncLifetime
         finally { shutdown.Cancel(); await Stop(running); }
     }
 
+    [Theory(Timeout = 30_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FirstConnectionPrintsTheFingerprintOnItsOwnLine(bool pair)
+    {
+        using var identity = BrokerIdentity.Create();
+        using var shutdown = new CancellationTokenSource();
+        var server = new BrokerServer(new(0, 4, 1, TimeSpan.FromSeconds(2)), identity, TestProfiles.Default);
+        var running = server.RunAsync(shutdown.Token);
+        var port = await server.ListeningPort;
+        try
+        {
+            var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "FarShell.Client.exe"))
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            if (pair) { start.ArgumentList.Add("--pair"); }
+            start.ArgumentList.Add("--state-dir");
+            start.ArgumentList.Add(Path.Combine(_root, pair ? "pair-client" : "shell-client"));
+            start.ArgumentList.Add("127.0.0.1");
+            start.ArgumentList.Add(port.ToString());
+            using var process = Process.Start(start)!;
+            process.StandardInput.Close();
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(1, process.ExitCode);
+            Assert.Empty(await output);
+            Assert.StartsWith(
+                $"First connection to 127.0.0.1:{port}. Broker certificate SHA-256:{Environment.NewLine}{identity.Fingerprint}{Environment.NewLine}",
+                await error);
+        }
+        finally { shutdown.Cancel(); await Stop(running); }
+    }
+
     [Theory(Timeout = 15_000)]
     [InlineData(false)]
     [InlineData(true)]

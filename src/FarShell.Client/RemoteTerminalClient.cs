@@ -39,7 +39,10 @@ internal sealed class RemoteTerminalClient
         var pending = await connection.ReadAsync(timeout.Token);
         if (pending.Type != MessageType.PairPending) { throw new ProtocolException("Expected PAIR_PENDING."); }
         var request = ProtocolPayloads.DecodeSessionId(pending.Payload);
-        Console.WriteLine($"Pairing request: {request:N}\nOn the broker machine, under the broker's Windows user, run:\n  FarShell.Broker.exe --approve {request:N}\nApproval expires in 2 minutes.");
+        Console.WriteLine($"Pairing request: {request:N}");
+        Console.WriteLine("On the broker machine, under the broker's Windows user, run:");
+        Console.WriteLine($"  FarShell.Broker.exe --approve {request:N}");
+        Console.WriteLine("Approval expires in 2 minutes.");
         var accepted = await connection.ReadAsync(timeout.Token);
         if (accepted.Type != MessageType.PairAccepted || accepted.Payload.Length != 32)
         {
