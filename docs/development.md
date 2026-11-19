@@ -1,7 +1,7 @@
 # Development and release validation
 
-Use Windows, the .NET 10 SDK, and `pwsh.exe` on PATH. Run these commands from
-the repository root:
+Use Windows, the .NET 10 SDK, and `pwsh.exe` on PATH. `global.json` selects the
+latest installed stable 10.0 SDK. Run these commands from the repository root:
 
 ```powershell
 dotnet build .\FarShell.sln -c Release
