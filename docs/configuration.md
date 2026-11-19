@@ -1,6 +1,6 @@
 # Session profiles
 
-The broker loads `config.json` from its state directory (`~/.farshell` by
+The broker loads `config.json` from its state directory (`~/.config/farshell` by
 default) once at startup. `--state-dir <directory>` changes that directory;
 `--config <path>` selects a specific file. The client never reads this file.
 

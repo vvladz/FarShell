@@ -15,7 +15,7 @@ internal static class ClientUsage
         Options:
           --profile <name>         Broker-defined shell profile (default: broker selection).
           --output-batch-ms <0-100> Idle output delay (default: 4 ms; 0 is immediate).
-          --state-dir <directory>  Private trust/key storage (default: ~/.farshell).
+          --state-dir <directory>  Private trust/key storage (default: ~/.config/farshell).
           -h, --help               Show this help without connecting.
           --version                Show application and protocol versions.
 

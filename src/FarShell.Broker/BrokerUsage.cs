@@ -17,7 +17,7 @@ internal static class BrokerUsage
           --config <path>                 Profile configuration JSON.
                                           Default: config.json in the state directory.
           --state-dir <directory>         Private state and default config directory.
-                                          Default: ~/.farshell.
+                                          Default: ~/.config/farshell.
           --max-connections <1-1024>       Connection limit (default: 32).
           --max-sessions <1-1024>          Active shell limit (default: 16).
           --handshake-timeout-seconds <1-300>

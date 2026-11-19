@@ -45,9 +45,10 @@ a new pairing request.
 
 ## Local storage
 
-Default state directory: `%USERPROFILE%\.farshell` (`~/.farshell`). Both executables
-accept `--state-dir`; client and broker directories may be independent. Broker
-commands that administer a running broker must use its exact directory.
+Default state directory: `%USERPROFILE%\.config\farshell` (`~/.config/farshell`).
+Both executables accept `--state-dir`; client and broker directories may be
+independent. Broker commands that administer a running broker must use its exact
+directory.
 
 - `broker.bin` contains the certificate/private key and API key, encrypted with
   Windows DPAPI for the current user.

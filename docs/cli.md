@@ -21,7 +21,7 @@ invocation. Quote paths containing spaces.
 | --- | --- |
 | `--profile <name>` | Select a broker profile for a new shell; omission uses its default |
 | `--output-batch-ms <0-100>` | Idle output delay, default 4 ms; 0 is immediate |
-| `--state-dir <directory>` | Client private storage, default `~/.farshell` |
+| `--state-dir <directory>` | Client private storage, default `~/.config/farshell` |
 | `--pair` | Request broker-local approval and receive the shared API key over TLS |
 | `--trust <fingerprint>` | Pin an independently verified SHA-256 certificate fingerprint; a changed pin clears the old key |
 
@@ -63,7 +63,7 @@ FarShell.Broker.exe --send <relative-file-or-pattern> [more-files...]
 | `--max-sessions <count>` | 16; range 1–1024 |
 | `--handshake-timeout-seconds <seconds>` | 10; range 1–300 |
 | `--config <path>` | `config.json` in the broker state directory |
-| `--state-dir <directory>` | `~/.farshell`; also sets the default location for `config.json` |
+| `--state-dir <directory>` | `~/.config/farshell`; also sets the default location for `config.json` |
 
 The listener binds all IPv4 interfaces. The setup timeout covers TLS,
 HELLO, authentication, and receipt of the first operation. It does not limit

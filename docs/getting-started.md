@@ -30,8 +30,8 @@ applications; the .NET runtime is installed separately.
 ## Pair a client
 
 1. Run `.\FarShell.Broker.exe` on the broker machine. First startup creates its
-   protected certificate and API key under `~/.farshell` and prints the certificate
-   SHA-256 fingerprint. The default listener is `0.0.0.0:8022`.
+   protected certificate and API key under `~/.config/farshell` and prints the
+   certificate SHA-256 fingerprint. The default listener is `0.0.0.0:8022`.
 2. Permit inbound TCP 8022 from the intended clients in Windows Firewall according
    to your environment's access policy.
 3. Run `.\FarShell.Client.exe --pair <broker-host>` on the client. Compare its

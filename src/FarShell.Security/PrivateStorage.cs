@@ -10,7 +10,7 @@ namespace FarShell.Security;
 public static class PrivateStorage
 {
     public static string DefaultDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".farshell");
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "farshell");
 
     public static void EnsureDirectory(string directory)
     {
