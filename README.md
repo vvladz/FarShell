@@ -19,7 +19,7 @@ Windows Job Object breakaway can keep their child processes running.
 
 Use matching broker and client packages from [Releases](https://github.com/vvladz/FarShell/releases).
 Windows 11 and Windows Terminal are recommended. The executables require the
-.NET 10 x64 runtime; the default shell requires PowerShell 7 on the broker's PATH.
+.NET 11 x64 runtime; the default shell requires PowerShell 7 on the broker's PATH.
 Keep all files in the broker archive together, including the bundled ConPTY files.
 
 See [installation and upgrades](docs/getting-started.md) for requirements,
@@ -75,7 +75,7 @@ Both executables support `--help` and `--version`.
 
 ## Build
 
-From the repository root with the .NET 10 SDK:
+From the repository root with the .NET 11 SDK:
 
 ```powershell
 dotnet build .\FarShell.sln -c Release

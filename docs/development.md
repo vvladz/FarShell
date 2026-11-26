@@ -1,7 +1,7 @@
 # Development and release validation
 
-Use Windows, the .NET 10 SDK, and `pwsh.exe` on PATH. `global.json` selects the
-latest installed stable 10.0 SDK. Run these commands from the repository root:
+Use Windows, the .NET 11 SDK, and `pwsh.exe` on PATH. `global.json` selects the
+latest installed stable 11.0 SDK. Run these commands from the repository root:
 
 ```powershell
 dotnet build .\FarShell.sln -c Release
@@ -22,6 +22,8 @@ dotnet publish .\src\FarShell.Client\FarShell.Client.csproj -c Release -r win-x6
 
 Keep the broker's `conpty.dll` and matching `OpenConsole.exe` files. Confirm that
 published `--help` and `--version` work and invalid arguments return 2.
+The broker project explicitly excludes the native OpenConsole hosts from the
+single-file bundle so the SDK copies their architecture-specific directories.
 
 ## Releases
 

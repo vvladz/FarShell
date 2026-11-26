@@ -3,8 +3,8 @@
 ## Requirements
 
 - Windows 10 version 1809 or later as enforced by FarShell; Windows 11 is the
-  recommended environment. Install a .NET 10 runtime supported by your Windows version.
-- .NET 10 x64 runtime for downloaded binaries; .NET 10 SDK for source builds.
+  recommended environment. Install a .NET 11 runtime supported by your Windows version.
+- .NET 11 x64 runtime for downloaded binaries; .NET 11 SDK for source builds.
 - PowerShell 7 (`pwsh.exe` on the broker's startup PATH) for the built-in profile.
   A configured profile may select another executable.
 - Windows Terminal for the intended interactive experience.
